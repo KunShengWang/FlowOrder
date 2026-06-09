@@ -1,0 +1,24 @@
+package com.javaup.resource.controller;
+
+import com.javaup.common.ApiResponse;
+import com.javaup.dto.ResourceOrderCreateDto;
+import com.javaup.enums.ResourceOrderVersionEnum;
+import com.javaup.resource.service.strategy.ResourceOrderContext;
+import jakarta.annotation.Resource;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/reservation")
+public class ResourceOrderController {
+
+    @Resource
+    private ResourceOrderContext context;
+
+    @PostMapping("/create/v1")
+    public ApiResponse<String> createOrderV1(@RequestBody ResourceOrderCreateDto createDto){
+        return ApiResponse.<String>success(context.get(ResourceOrderVersionEnum.V1_VERSION.getVersion()).createOrder(createDto));
+    }
+}

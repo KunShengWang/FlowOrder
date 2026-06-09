@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.javaup</groupId>
+        <artifactId>floworder</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>floworder-server-client</artifactId>
+    <packaging>pom</packaging>
+
+    <name>server-client</name>
+    <description>服务feign接口</description>
+
+    <modules>
+        <module>floworder-resource-client</module>
+        <module>floworder-order-client</module>
+    </modules>
+
+    <dependencies>
+        <!--floworder-common-->
+        <dependency>
+            <groupId>com.javaup</groupId>
+            <artifactId>floworder-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!--openfeign-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

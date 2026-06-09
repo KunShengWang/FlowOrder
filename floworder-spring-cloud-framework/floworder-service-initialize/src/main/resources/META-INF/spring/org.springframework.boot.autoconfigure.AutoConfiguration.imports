@@ -1,0 +1,2 @@
+com.javaup.initialize.config.InitializeAutoConfig
+com.javaup.initialize.impl.composite.CompositeAutoConfiguration
