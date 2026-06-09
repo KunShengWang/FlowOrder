@@ -14,7 +14,6 @@ public class FlowOrderFrameException extends BaseException {
     public FlowOrderFrameException(Integer code,String message) {
         super(message);
         this.code = code;
-        this.message = message;
     }
 
     public FlowOrderFrameException(BaseCodeEnum codeEnum) {

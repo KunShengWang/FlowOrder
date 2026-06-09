@@ -33,4 +33,11 @@ public class ApiResponse<T> {
         response.message = codeEnum.getMessage();
         return response;
     }
+
+    public static <T> ApiResponse<T> error(Integer code,String message){
+        ApiResponse<T> response = new ApiResponse<>();
+        response.code = code;
+        response.message = message;
+        return response;
+    }
 }

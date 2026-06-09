@@ -14,7 +14,6 @@ public class BizException extends BaseException {
   public BizException(Integer code,String message) {
     super(message);
     this.code = code;
-    this.message = message;
   }
 
   public BizException(BaseCodeEnum codeEnum) {

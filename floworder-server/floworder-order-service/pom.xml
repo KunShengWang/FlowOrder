@@ -28,6 +28,12 @@
             <artifactId>floworder-order-client</artifactId>
             <version>${revision}</version>
         </dependency>
+        <!--service-common-->
+        <dependency>
+            <groupId>com.javaup</groupId>
+            <artifactId>floworder-service-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
         <!--web-->
         <dependency>
             <groupId>org.springframework.boot</groupId>

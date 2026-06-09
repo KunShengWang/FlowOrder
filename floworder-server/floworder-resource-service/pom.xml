@@ -41,6 +41,12 @@
             <artifactId>floworder-service-initialize</artifactId>
             <version>${revision}</version>
         </dependency>
+        <!--service-common-->
+        <dependency>
+            <groupId>com.javaup</groupId>
+            <artifactId>floworder-service-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
         <!--web-->
         <dependency>
             <groupId>org.springframework.boot</groupId>
