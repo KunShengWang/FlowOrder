@@ -13,10 +13,12 @@
         <module>floworder-common</module>
         <module>floworder-server-client</module>
         <module>floworder-spring-cloud-framework</module>
+        <module>floworder-redisson-framework</module>
     </modules>
 
     <properties>
         <revision>0.0.1-SNAPSHOT</revision>
+        <redisson.version>3.32.0</redisson.version>
         <java.version>17</java.version>
         <spring.boot.version>3.5.14</spring.boot.version>
         <spring.cloud.version>2025.0.0</spring.cloud.version>

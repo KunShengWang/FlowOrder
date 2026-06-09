@@ -47,6 +47,9 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
     @Resource
     private OrderClient orderClient;
 
+    /**
+     * 并发场景下，相同的 requestId 同时请求，是数据库的唯一key做兜底和防御
+     */
     @Override
     public String createV1(ResourceOrderCreateDto createDto) {
         // 根据 requestId 查看库存扣减记录
@@ -54,15 +57,16 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         if (Objects.nonNull(oldRecord)) {
             return handleOldDeductRecord(oldRecord);
         }
-
+        // 构造编号
         String orderNo = generateOrderNo();
         String deductNo = generateDeductNo();
         // 过期时间为15分钟
         LocalDateTime expireTime = LocalDateTime.now().plusMinutes(DEFAULT_EXPIRE_MINUTES);
+        // 构造 redis 的 key
         String stockKey = buildStockKey(createDto.getStockItemId());
         // 初始化 redis 库存
         initStockCacheIfAbsent(createDto.getStockItemId(), stockKey);
-
+        // 扣减 redis 库存，返回剩余的库存
         Long remainStock = stringRedisTemplate.opsForValue().decrement(stockKey, createDto.getQuantity());
         if (Objects.isNull(remainStock)) {
             throw new BizException("Redis扣减库存失败");
@@ -71,20 +75,22 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             stringRedisTemplate.opsForValue().increment(stockKey, createDto.getQuantity());
             throw new BizException("库存不足");
         }
-
+        // 构建库存预扣记录，此时的预扣记录的状态为 10(已预扣)
         StockDeductRecordEntity deductRecord = buildPreDeductRecord(createDto, deductNo, expireTime);
         try {
             stockDeductRecordMapper.insert(deductRecord);
         } catch (DuplicateKeyException e) {
             stringRedisTemplate.opsForValue().increment(stockKey, createDto.getQuantity());
+            // 根据 requestId 获取预扣记录
             StockDeductRecordEntity existRecord = getDeductRecordByRequestId(createDto.getRequestId());
             if (Objects.nonNull(existRecord)) {
                 return handleOldDeductRecord(existRecord);
             }
             throw e;
         }
-
+        // 上面是创建预扣订单，下面是扣减 redis 的库存
         try {
+            // 远程调用创建订单
             ApiResponse<String> createOrderResponse = orderClient.create(buildCreateOrderDto(createDto, orderNo,
                     deductNo, expireTime));
             if (Objects.isNull(createOrderResponse) || !Objects.equals(createOrderResponse.getCode(), SUCCESS_CODE)) {
@@ -92,10 +98,12 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             }
             String realOrderNo = StringUtils.hasText(createOrderResponse.getData()) ? createOrderResponse.getData() :
                     orderNo;
+            // 更新库存预扣记录状态，此时的预扣记录的状态为 20(已确认)
             confirmDeductRecord(deductNo, realOrderNo);
             return realOrderNo;
         } catch (RuntimeException e) {
             stringRedisTemplate.opsForValue().increment(stockKey, createDto.getQuantity());
+            // 把库存预扣记录的状态和释放原因给补充
             failDeductRecord(deductNo, limitReason(e.getMessage()));
             throw e;
         }
