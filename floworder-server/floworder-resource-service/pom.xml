@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.javaup</groupId>
+        <artifactId>floworder</artifactId>
+        <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <!--这是子模块的唯一名称，Maven 靠它区分不同模块-->
+    <artifactId>floworder-resource-service</artifactId>
+
+    <name>resource-service</name>
+    <description>资源服务</description>
+
+    <dependencies>
+        <!--floworder-common-->
+        <dependency>
+            <groupId>com.javaup</groupId>
+            <artifactId>floworder-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!--floworder-resource-client-->
+        <dependency>
+            <groupId>com.javaup</groupId>
+            <artifactId>floworder-resource-client</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!--floworder-order-client-->
+        <dependency>
+            <groupId>com.javaup</groupId>
+            <artifactId>floworder-order-client</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!--floworder-service-initialize-->
+        <dependency>
+            <groupId>com.javaup</groupId>
+            <artifactId>floworder-service-initialize</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!--web-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!--redis-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <!--spring-cloud-loadbalancer-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+        <!--test-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+        </dependency>
+        <!-- mybatis-plus (Spring Boot 3.x starter) -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+        <!--mysql-->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+        </dependency>
+        <!--nacos 服务注册发现-->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

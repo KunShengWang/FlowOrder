@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.javaup</groupId>
+        <artifactId>floworder</artifactId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>floworder-server</artifactId>
+    <packaging>pom</packaging>
+
+    <name>server</name>
+    <description>服务模块聚合</description>
+
+    <modules>
+        <module>floworder-resource-service</module>
+        <module>floworder-order-service</module>
+        <module>floworder-gateway-service</module>
+    </modules>
+
+</project>

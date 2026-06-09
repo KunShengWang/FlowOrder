@@ -1,0 +1,26 @@
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          discovery:
+            locator:
+              enabled: true
+          routes:
+            - id: floworder-order-service
+              uri: lb://floworder-order-service
+              predicates:
+                - Path=/floworder/order/**
+              filters:
+                - StripPrefix=2
+              metadata:
+                title: 订单服务
+
+            - id: floworder-resource-service
+              uri: lb://floworder-resource-service
+              predicates:
+                - Path=/floworder/resource/**
+              filters:
+                - StripPrefix=2
+              metadata:
+                title: 资源服务

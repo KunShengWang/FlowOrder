@@ -9,9 +9,8 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>floworder-resource-service</module>
+        <module>floworder-server</module>
         <module>floworder-common</module>
-        <module>floworder-order-service</module>
         <module>floworder-server-client</module>
         <module>floworder-spring-cloud-framework</module>
     </modules>
