@@ -12,6 +12,8 @@ import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.service.ResourceOrderService;
 import jakarta.annotation.Resource;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class ResourceOrderServiceImpl implements ResourceOrderService {
@@ -47,11 +50,36 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
     @Resource
     private OrderClient orderClient;
 
+    @Resource
+    private RedissonClient redissonClient;
+
     /**
      * 并发场景下，相同的 requestId 同时请求，是数据库的唯一key做兜底和防御
      */
     @Override
     public String createV1(ResourceOrderCreateDto createDto) {
+        String lockKey = "floworder:lock:reservation:create:v1:stock:" + createDto.getStockItemId();
+        RLock lock = redissonClient.getLock(lockKey);
+        boolean locked = false;
+        try{
+            // 尝试获取锁，如果3秒内没有获取到锁就直接失败，不阻塞；如果获取到锁就执行看门狗机制
+            locked = lock.tryLock(3, TimeUnit.SECONDS);
+            if (!locked) {
+                throw new BizException("当前预约人数较多，请稍后重试");
+            }
+            return doCreateV1(createDto);
+        }catch (InterruptedException e){
+            Thread.currentThread().interrupt();
+            throw new BizException("获取下单锁失败");
+        }finally {
+            if (locked && lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
+
+    }
+
+    public String doCreateV1(ResourceOrderCreateDto createDto) {
         // 根据 requestId 查看库存扣减记录
         StockDeductRecordEntity oldRecord = getDeductRecordByRequestId(createDto.getRequestId());
         if (Objects.nonNull(oldRecord)) {
