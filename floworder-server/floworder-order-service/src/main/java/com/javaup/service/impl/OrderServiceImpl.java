@@ -3,6 +3,7 @@ package com.javaup.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.javaup.dto.CreateOrderDto;
+import com.javaup.dto.OrderQueryDto;
 import com.javaup.entity.ReservationOrderEntity;
 import com.javaup.exception.BizException;
 import com.javaup.mapper.ReservationOrderMapper;
@@ -17,6 +18,9 @@ import java.util.Objects;
 @Service
 public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, ReservationOrderEntity> implements OrderService {
 
+    /**
+     * 创建订单
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String create(CreateOrderDto createOrderDto) {
@@ -53,6 +57,25 @@ public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, Reserv
         return order.getOrderNo();
     }
 
+    /**
+     * 订单查询
+     */
+    @Override
+    public OrderQueryDto queryByRequestId(String requestId) {
+        // 根据 requestId 查询预约订单表
+        ReservationOrderEntity order = getByRequestId(requestId);
+        OrderQueryDto result = new OrderQueryDto();
+        result.setExists(order != null);
+        if (order != null) {
+            result.setOrderNo(order.getOrderNo());
+            result.setStatus(order.getStatus());
+        }
+        return result;
+    }
+
+    /**
+     * 根据 requestId 查询预约订单表
+     */
     private ReservationOrderEntity getByRequestId(String requestId) {
         return getOne(Wrappers.<ReservationOrderEntity>lambdaQuery()
                 .eq(ReservationOrderEntity::getRequestId, requestId)

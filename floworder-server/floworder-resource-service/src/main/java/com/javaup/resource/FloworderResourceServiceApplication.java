@@ -6,11 +6,13 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @MapperScan({"com.javaup.resource.mapper"})
 @SpringBootApplication(scanBasePackages = {"com.javaup"})
 @EnableFeignClients(basePackages = {"com.javaup.client"})
 @EnableDiscoveryClient
+@EnableScheduling
 @Slf4j
 public class FloworderResourceServiceApplication {
 
