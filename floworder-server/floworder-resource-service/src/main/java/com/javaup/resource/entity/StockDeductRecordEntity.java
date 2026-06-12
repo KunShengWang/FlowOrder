@@ -39,7 +39,7 @@ public class StockDeductRecordEntity {
     /** 请求幂等ID */
     private String requestId;
 
-    /** 状态：10已预扣 20已确认 30已释放 40失败 */
+    /** 状态：10已预扣 20已确认 30已释放 40失败 50人工确认 */
     private Integer status;
 
     /** 预扣过期时间 */
@@ -53,4 +53,16 @@ public class StockDeductRecordEntity {
 
     /** 更新时间 */
     private LocalDateTime updatedAt;
+
+    /** 订单不存在确认次数 */
+    private Integer retryCount;
+
+    /** 下次确认时间 */
+    private LocalDateTime nextRetryTime;
+
+    /** 最后确认结果 */
+    private String lastError;
+
+    /** 订单查询异常次数 */
+    private Integer queryErrorCount;
 }

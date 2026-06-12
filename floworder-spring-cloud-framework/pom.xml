@@ -17,6 +17,7 @@
 
     <modules>
         <module>floworder-service-initialize</module>
+        <module>floworder-service-common</module>
     </modules>
 
 </project>

@@ -31,6 +31,7 @@ public class StockDeductServiceImpl implements StockDeductService {
     public void preDeduct(ResourceOrderCreateDto dto, StockDeductRecordEntity record) {
         // 插入预扣记录
         deductRecordMapper.insert(record);
+        // 更新库存
         int rows = stockItemMapper.update(
                 null,
                 Wrappers.<StockItemEntity>lambdaUpdate().eq(StockItemEntity::getId, dto.getStockItemId())

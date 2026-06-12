@@ -79,7 +79,7 @@ CREATE TABLE fo_stock_deduct_record (
     stock_item_id BIGINT NOT NULL COMMENT '库存项ID',
     quantity INT NOT NULL COMMENT '预扣数量',
     request_id VARCHAR(128) NOT NULL COMMENT '请求幂等ID',
-    status TINYINT NOT NULL COMMENT '状态：10已预扣 20已确认 30已释放 40失败',
+    status TINYINT NOT NULL COMMENT '状态：10已预扣 20已确认 30已释放 40失败 50人工确认',
     expire_time DATETIME DEFAULT NULL COMMENT '预扣过期时间',
     release_reason VARCHAR(255) DEFAULT NULL COMMENT '释放原因',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -90,6 +90,20 @@ CREATE TABLE fo_stock_deduct_record (
     KEY idx_stock_item_id (stock_item_id),
     KEY idx_status_expire_time (status, expire_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='库存预扣记录表';
+
+ALTER TABLE fo_stock_deduct_record
+    ADD COLUMN retry_count INT NOT NULL DEFAULT 0 COMMENT '订单不存在确认次数',
+    ADD COLUMN next_retry_time DATETIME DEFAULT NULL COMMENT '下次确认时间',
+    ADD COLUMN last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后确认结果',
+    ADD INDEX idx_status_next_retry_time (status, next_retry_time);
+
+ALTER TABLE fo_stock_deduct_record
+    ADD COLUMN query_error_count INT NOT NULL DEFAULT 0
+        COMMENT '订单查询异常次数';
+
+UPDATE fo_stock_deduct_record
+SET next_retry_time = COALESCE(next_retry_time, expire_time, NOW())
+WHERE status = 10;
 
 CREATE TABLE fo_mq_message_log (
     id BIGINT NOT NULL PRIMARY KEY,

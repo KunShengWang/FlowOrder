@@ -15,6 +15,14 @@ import org.springframework.util.StringUtils;
 
 import java.util.Objects;
 
+import static com.javaup.enums.BaseCodeEnum.ORDER_CREATE_PARAM_EMPTY;
+import static com.javaup.enums.BaseCodeEnum.ORDER_NO_EMPTY;
+import static com.javaup.enums.BaseCodeEnum.ORDER_QUANTITY_INVALID;
+import static com.javaup.enums.BaseCodeEnum.ORDER_REQUEST_ID_EMPTY;
+import static com.javaup.enums.BaseCodeEnum.ORDER_RESOURCE_ID_EMPTY;
+import static com.javaup.enums.BaseCodeEnum.ORDER_STOCK_ITEM_ID_EMPTY;
+import static com.javaup.enums.BaseCodeEnum.ORDER_USER_ID_EMPTY;
+
 @Service
 public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, ReservationOrderEntity> implements OrderService {
 
@@ -84,25 +92,25 @@ public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, Reserv
 
     private void checkCreateOrderDto(CreateOrderDto createOrderDto) {
         if (Objects.isNull(createOrderDto)) {
-            throw new BizException("创建订单参数不能为空");
+            throw new BizException(ORDER_CREATE_PARAM_EMPTY);
         }
         if (!StringUtils.hasText(createOrderDto.getOrderNo())) {
-            throw new BizException("订单号不能为空");
+            throw new BizException(ORDER_NO_EMPTY);
         }
         if (Objects.isNull(createOrderDto.getUserId())) {
-            throw new BizException("用户ID不能为空");
+            throw new BizException(ORDER_USER_ID_EMPTY);
         }
         if (Objects.isNull(createOrderDto.getResourceId())) {
-            throw new BizException("资源ID不能为空");
+            throw new BizException(ORDER_RESOURCE_ID_EMPTY);
         }
         if (Objects.isNull(createOrderDto.getStockItemId())) {
-            throw new BizException("库存项ID不能为空");
+            throw new BizException(ORDER_STOCK_ITEM_ID_EMPTY);
         }
         if (Objects.isNull(createOrderDto.getQuantity()) || createOrderDto.getQuantity() <= 0) {
-            throw new BizException("预约数量非法");
+            throw new BizException(ORDER_QUANTITY_INVALID);
         }
         if (!StringUtils.hasText(createOrderDto.getRequestId())) {
-            throw new BizException("requestId不能为空");
+            throw new BizException(ORDER_REQUEST_ID_EMPTY);
         }
     }
 }

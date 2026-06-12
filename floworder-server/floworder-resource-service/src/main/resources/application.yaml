@@ -18,13 +18,20 @@ spring:
       host: localhost
       port: 6379
       database: 1
-  # nacos
   cloud:
+    # nacos
     nacos:
       discovery:
         server-addr: 127.0.0.1:8848
         username: nacos
         password: nacos
+    # openfeign
+    openfeign:
+      client:
+        config:
+          floworder-order-service:
+            connectTimeout: 2000
+            readTimeout: 5000
   # redisson
   redisson:
     address: redis://127.0.0.1:6379

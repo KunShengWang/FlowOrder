@@ -6,6 +6,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.Objects;
+
+import static com.javaup.enums.BaseCodeEnum.BUSINESS_ERROR;
+
 @RestControllerAdvice
 @Slf4j
 public class DefaultExceptionHandler {
@@ -16,7 +20,8 @@ public class DefaultExceptionHandler {
     @ExceptionHandler(value = BizException.class)
     public ApiResponse<String> toolkitExceptionHandler(HttpServletRequest request, BizException bizException) {
         log.error("业务异常 错误信息 : {} method : {} url : {} query : {} ", bizException.getMessage(), request.getMethod(), getRequestUrl(request), getRequestQuery(request), bizException);
-        return ApiResponse.error(bizException.getCode(), bizException.getMessage());
+        Integer code = Objects.requireNonNullElse(bizException.getCode(), BUSINESS_ERROR.getCode());
+        return ApiResponse.error(code, bizException.getMessage());
     }
 
     private String getRequestUrl(HttpServletRequest request) {

@@ -8,4 +8,9 @@ public interface ResourceOrderService {
      * V1版本创建订单
      */
     String createV1(ResourceOrderCreateDto createDto);
+
+    /**
+     * V2版本创建订单
+     */
+    String createV2(ResourceOrderCreateDto createDto);
 }

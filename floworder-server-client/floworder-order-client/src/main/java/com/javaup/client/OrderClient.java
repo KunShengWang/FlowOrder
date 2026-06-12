@@ -13,7 +13,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 /**
  * 订单服务 feign
  */
-@FeignClient(value = Constant.FLOWORDER_ORDER_SERVICE,fallback = OrderClientFallback.class)
+@FeignClient(
+        value = Constant.FLOWORDER_ORDER_SERVICE,
+        fallbackFactory = OrderClientFallbackFactory.class
+)
 public interface OrderClient {
 
     /**

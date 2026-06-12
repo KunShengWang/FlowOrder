@@ -3,14 +3,17 @@ package com.javaup.resource.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.javaup.client.OrderClient;
 import com.javaup.common.ApiResponse;
+import com.javaup.constant.RedisConstant;
 import com.javaup.dto.CreateOrderDto;
 import com.javaup.dto.OrderQueryDto;
 import com.javaup.dto.ResourceOrderCreateDto;
+import com.javaup.enums.StockLuaResultCodeEnum;
 import com.javaup.exception.BizException;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.entity.StockItemEntity;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
+import com.javaup.resource.redis.StockDeductLuaExecutor;
 import com.javaup.resource.service.ResourceOrderService;
 import com.javaup.resource.service.StockDeductService;
 import jakarta.annotation.Resource;
@@ -28,6 +31,10 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_EXIST;
+import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_OPEN;
+import static com.javaup.enums.StockLuaResultCodeEnum.STOCK_CACHE_MISSING;
+
 @Service
 @Slf4j
 public class ResourceOrderServiceImpl implements ResourceOrderService {
@@ -41,6 +48,8 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
     private static final Integer SUCCESS_CODE = 200;
 
     private static final Integer DEFAULT_EXPIRE_MINUTES = 15;
+
+    private static final Integer STOCK_DEDUCT_STATUS_MANUAL_REVIEW = 50;
 
     @Resource
     private StockItemMapper stockItemMapper;
@@ -59,6 +68,9 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
 
     @Resource
     private StockDeductService stockDeductService;
+
+    @Resource
+    private StockDeductLuaExecutor stockDeductLuaExecutor;
 
     /**
      * 并发场景下，相同的 requestId 同时请求，是数据库的唯一key做兜底和防御
@@ -83,6 +95,240 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             if (locked && lock.isHeldByCurrentThread()) {
                 lock.unlock();
             }
+        }
+    }
+
+    @Override
+    public String createV2(ResourceOrderCreateDto createDto) {
+        // 保证幂等性
+        // 根据 requestId 查看库存扣减记录，如果重复请求就把创建好的订单记录返回
+        StockDeductRecordEntity oldRecord = getDeductRecordByRequestId(createDto.getRequestId());
+        if (Objects.nonNull(oldRecord)) {
+            // 根据库存预扣记录的状态去判断下一步的操作
+            return handleOldDeductRecord(oldRecord,createDto);
+        }
+        // 构建库存key
+        String stockKey = RedisConstant.FLOWORDER_STOCK + createDto.getStockItemId();
+        // 扣减redis库存，如果扣减成功会返回库存剩余值
+        // 有数据库requestId唯一索引做防御，不会引发多线程安全问题
+        Long remainStock = deductRedisStockV2(createDto.getStockItemId(),stockKey,createDto.getQuantity());
+        // 构造编号
+        String orderNo = generateOrderNo();
+        String deductNo = generateDeductNo();
+        // 远程调用超时的过期时间为5秒
+        // 这个过期时间应该是被下次确认时间给替代了
+        LocalDateTime reconcileTime = LocalDateTime.now().plusSeconds(5);
+        // 订单超时未支付时间
+        LocalDateTime expireTime = LocalDateTime.now().plusMinutes(15);
+        // 构建库存预扣记录，此时的预扣记录的状态为 10(已预扣)
+        StockDeductRecordEntity deductRecord = buildPreDeductRecord(createDto, deductNo, reconcileTime);
+        // 进行库存预扣
+        try{
+            // 一个事务中完成：
+            // 1. 插入预扣记录
+            // 2. available_stock -> locked_stock
+            stockDeductService.preDeduct(createDto,deductRecord);
+        }catch (DuplicateKeyException e){// 插入预扣记录出现重复key操作，说明之前已经下过单了
+            // 进行redis的补偿
+            compensateRedisSafely(stockKey,createDto.getQuantity(),e);
+            // 根据requestId查询库存预扣记录
+            oldRecord = getDeductRecordByRequestId(createDto.getRequestId());
+            if (Objects.nonNull(oldRecord)) {
+                // 根据库存预扣记录的状态去判断下一步的操作
+                return handleOldDeductRecord(oldRecord,createDto);
+            }
+            throw e;
+        } catch (RuntimeException e) {
+            compensateRedisSafely(stockKey,createDto.getQuantity(),e);
+            throw e;
+        }
+        // 执行远程下单逻辑
+        // 构建创建订单dto
+        CreateOrderDto orderDto = buildCreateOrderDto(createDto, orderNo, deductNo, expireTime);
+        ApiResponse<String> response;
+        try{
+            response = orderClient.create(orderDto);
+        } catch (RuntimeException e) {
+            // Feign 的网络、超时等异常
+            // 此时不应该是为远程订单创建失败，需要进一步的排查
+            log.warn("订单创建调用异常，结果未知, requestId={}",
+                    createDto.getRequestId(), e);
+            return confirmRemoteOrderResult(createDto,orderDto);
+        }
+        // 如果response为空，防御性编程
+        if(response == null || response.getCode() == null){
+            return confirmRemoteOrderResult(createDto,orderDto);
+        }
+        // 明确订单创建失败,执行库存回退
+        if(!Objects.equals(response.getCode(),SUCCESS_CODE)){
+            String cause =  StringUtils.hasText(response.getMessage()) ? response.getMessage() : "订单服务明确返回创建失败";
+            BizException originalException = new BizException(response.getCode(), cause);
+            try{
+                // 库存失败释放
+                releaseForCreateOrderFailure(createDto,deductNo,cause,stockKey,originalException);
+            } catch (RuntimeException compensateException) {
+                originalException.addSuppressed(compensateException);
+                log.error(
+                        "订单创建失败后的库存补偿失败, requestId={}, deductNo={}, stockItemId={}",
+                        createDto.getRequestId(),
+                        deductNo,
+                        createDto.getStockItemId(),
+                        originalException
+                );
+            }
+            throw originalException;
+        }
+        // 订单创建成功
+        if (!StringUtils.hasText(response.getData())) {
+            return confirmRemoteOrderResult(createDto, orderDto);
+        }
+        String realOrderNo = response.getData();
+        try{
+            stockDeductService.confirm(deductNo,realOrderNo);
+        } catch (RuntimeException e) {
+            /*
+             * 订单已经存在，confirm失败时绝对不能释放库存。
+             * 保持PRE_DEDUCTED，由补偿任务重新确认。
+             */
+            throw new BizException("订单已创建，库存状态确认处理中");
+        }
+        return realOrderNo;
+    }
+
+    /**
+     * 创建订单失败的库存释放
+     */
+    private void releaseForCreateOrderFailure(ResourceOrderCreateDto orderDto, String deductNo, String cause, String stockKey,RuntimeException originalException) {
+        // 数据库的库存释放
+        stockDeductService.release(orderDto,deductNo,cause);
+        // redis的库存释放
+        compensateRedisSafely(stockKey,orderDto.getQuantity(),originalException);
+    }
+
+    /**
+     * 确认远程调用结果
+     */
+    private String confirmRemoteOrderResult(ResourceOrderCreateDto createDto,CreateOrderDto orderDto) {
+        ApiResponse<OrderQueryDto> response;
+        try{
+             response = orderClient.queryByRequestId(createDto.getRequestId());
+        } catch (RuntimeException e) {
+            // 可能还会出现远程调用网络超时等异常，需要进一步的排查
+            log.warn("查询订单结果失败, requestId={}",
+                    createDto.getRequestId(), e);
+            throw new BizException("订单创建结果确认中，请勿重复提交");
+        }
+        // response可能为空，只是作为防御性设置，可能会发生
+        if(response == null){
+            log.error(
+                    "订单查询返回空响应, requestId={}",
+                    createDto.getRequestId()
+            );
+            throw new BizException("订单创建结果确认中，请勿重复提交");
+        }
+        // 响应码不是成功的200,这是查询出现了异常，并不代表创建任务失败，所以可以重试
+        if(!Objects.equals(response.getCode(),SUCCESS_CODE)){
+            log.warn(
+                    "订单查询业务失败, requestId={}, code={}, message={}",
+                    createDto.getRequestId(),
+                    response.getCode(),
+                    response.getMessage()
+            );
+            throw new BizException("订单创建结果确认中，请勿重复提交");
+        }
+        // 响应的response可能为空，只是作为防御性设置，可能会发生
+        if(response.getData() == null){
+            log.error(
+                    "订单查询成功但data为空, requestId={}",
+                    createDto.getRequestId()
+            );
+            throw new BizException("订单创建结果确认中，请勿重复提交");
+        }
+        OrderQueryDto data = response.getData();
+        // 没有查询到订单，刚调用完orderClient.create(orderDto)事务可能还未提交
+        if(!Boolean.TRUE.equals(data.getExists())){
+            throw new BizException("订单创建结果确认中，请勿重复提交");
+        }
+        if (!StringUtils.hasText(data.getOrderNo())) {
+            throw new BizException("订单创建结果确认中，请勿重复提交");
+        }
+        // 查到订单
+        try{
+            // 确认订单
+            // 是否需要把订单的状态改为20
+            stockDeductService.confirm(orderDto.getDeductNo(),data.getOrderNo());
+        } catch (RuntimeException e) {
+            // 订单存在，禁止释放
+            throw new BizException("订单已创建，库存状态确认处理中");
+        }
+        return data.getOrderNo();
+    }
+
+    /**
+     * 扣减redis库存
+     */
+    private Long deductRedisStockV2(Long stockItemId, String stockKey, Integer quantity) {
+        // lua 脚本扣减 redis 库存
+        Long result = stockDeductLuaExecutor.deduct(stockKey,quantity);
+        if (result == null) {
+            throw new BizException("Redis库存扣减结果为空");
+        }
+        StockLuaResultCodeEnum luaResultCode = StockLuaResultCodeEnum.of(result);
+        // 判断下是否是库存缓存不存在
+        if(luaResultCode == STOCK_CACHE_MISSING){
+            // 初始化redis缓存并重试一次扣减redis库存
+            initStockCacheIfAbsent(stockItemId,stockKey);
+            result = stockDeductLuaExecutor.deduct(stockKey,quantity);
+            if (result == null) {
+                throw new BizException("Redis库存扣减结果为空");
+            }
+            luaResultCode = StockLuaResultCodeEnum.of(result);
+        }
+        // 出现错误
+        if(Objects.nonNull(luaResultCode)){
+            throw new BizException(luaResultCode);
+        }
+        // 返回库存剩余值
+        return result;
+    }
+
+    /**
+     * redis库存恢复
+     */
+    private void compensateRedisSafely(String stockKey, Integer quantity, RuntimeException originalException) {
+        try {
+            Long result = stockDeductLuaExecutor.increment(stockKey, quantity);
+            if (result == null) {
+                throw new BizException("Redis库存恢复结果为空");
+            }
+            StockLuaResultCodeEnum resultCode = StockLuaResultCodeEnum.of(result);
+            if (resultCode == null) {
+                // 返回非负库存，恢复成功
+                return;
+            }
+            if (resultCode == StockLuaResultCodeEnum.STOCK_KEY_MISSING) {
+                /*
+                 * key 已经不存在，不要使用 INCRBY 创建一个错误库存。
+                 * 保持缓存缺失，下次请求从 MySQL 重新初始化。
+                 */
+                log.warn("恢复Redis库存时key不存在, stockKey={}", stockKey);
+                return;
+            }
+            throw new BizException(resultCode);
+        } catch (RuntimeException compensateException) {
+            try{
+                stringRedisTemplate.delete(stockKey);
+            }catch (RuntimeException deleteException){
+                compensateException.addSuppressed(deleteException);
+            }
+            originalException.addSuppressed(compensateException);
+            log.error(
+                    "Redis库存补偿失败, stockKey={}, quantity={}",
+                    stockKey,
+                    quantity,
+                    originalException
+            );
+            // 这里不会抛异常，因为这里的异常是挂在调用方的异常上的，调用方会抛出异常
         }
     }
 
@@ -229,27 +475,28 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         if (Objects.equals(oldRecord.getStatus(), STOCK_DEDUCT_STATUS_FAILED)) {
             throw new BizException("该requestId对应的预约请求已失败，请更换requestId后重试");
         }
+        if (Objects.equals(oldRecord.getStatus(), STOCK_DEDUCT_STATUS_MANUAL_REVIEW)) {
+            throw new BizException("订单创建结果人工确认中，请勿重复提交");
+        }
         throw new BizException("该requestId状态异常，请勿重复提交");
     }
 
     /**
-     * 初始化 redis 库存，把数据库中的商品库存放到redis中
+     * 如果redis中没有库存的缓存，就需要初始化redis
      */
-    private void initStockCacheIfAbsent(Long stockItemId, String stockKey) {
-        // 判断当前的redis中是否有库存
-        Boolean hasStockCache = stringRedisTemplate.hasKey(stockKey);
-        if (Boolean.TRUE.equals(hasStockCache)) {
-            return;
+    private void initStockCacheIfAbsent(Long stockItemId,String stockKey){
+        // 没有库存的缓存，需要查数据库获取
+        StockItemEntity stockItemEntity = stockItemMapper.selectById(stockItemId);
+        // 库存项不存在
+        if(Objects.isNull(stockItemEntity) || Objects.equals(stockItemEntity.getDeleted(),1)){
+            throw new BizException(StockItem_NOT_EXIST);
         }
-        // 如果没有库存需要去数据库中查询然后更新redis
-        StockItemEntity stockItem = stockItemMapper.selectById(stockItemId);
-        if (Objects.isNull(stockItem) || Objects.equals(stockItem.getDeleted(), 1)) {
-            throw new BizException("库存项不存在");
+        // 库存项未启动
+        if(!Objects.equals(stockItemEntity.getStatus(),1)){
+            throw new BizException(StockItem_NOT_OPEN);
         }
-        if (!Objects.equals(stockItem.getStatus(), 1)) {
-            throw new BizException("库存项未启用");
-        }
-        Integer availableStock = Objects.requireNonNullElse(stockItem.getAvailableStock(), 0);
+        // 初始化redis
+        Integer availableStock = Objects.requireNonNullElse(stockItemEntity.getAvailableStock(), 0);
         stringRedisTemplate.opsForValue().setIfAbsent(stockKey, String.valueOf(availableStock));
     }
 
@@ -266,6 +513,9 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         deductRecord.setRequestId(createDto.getRequestId());
         deductRecord.setStatus(STOCK_DEDUCT_STATUS_PRE_DEDUCTED);
         deductRecord.setExpireTime(expireTime);
+        deductRecord.setRetryCount(0);
+        deductRecord.setNextRetryTime(LocalDateTime.now().plusSeconds(5));
+        deductRecord.setLastError(null);
         return deductRecord;
     }
 
