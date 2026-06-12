@@ -51,6 +51,10 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
 
     private static final Integer STOCK_DEDUCT_STATUS_MANUAL_REVIEW = 50;
 
+    private static final int CREATE_MODE_SYNC = 2;
+
+    private static final int CREATE_MODE_ASYNC = 3;
+
     @Resource
     private StockItemMapper stockItemMapper;
 
@@ -121,7 +125,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         // 订单超时未支付时间
         LocalDateTime expireTime = LocalDateTime.now().plusMinutes(15);
         // 构建库存预扣记录，此时的预扣记录的状态为 10(已预扣)
-        StockDeductRecordEntity deductRecord = buildPreDeductRecord(createDto, deductNo, reconcileTime);
+        StockDeductRecordEntity deductRecord = buildPreDeductRecord(createDto, deductNo, reconcileTime, CREATE_MODE_SYNC);
         // 进行库存预扣
         try{
             // 一个事务中完成：
@@ -364,7 +368,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             throw new BizException("库存不足");
         }
         // 构建库存预扣记录，此时的预扣记录的状态为 10(已预扣)
-        StockDeductRecordEntity deductRecord = buildPreDeductRecord(createDto, deductNo, reconcileTime);
+        StockDeductRecordEntity deductRecord = buildPreDeductRecord(createDto, deductNo, reconcileTime, CREATE_MODE_SYNC);
         try {
             // 一个事务中完成：
             // 1. 插入预扣记录
@@ -503,7 +507,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
     /**
      * 构建库存预扣记录，此时的预扣记录的状态为 10(已预扣)
      */
-    private StockDeductRecordEntity buildPreDeductRecord(ResourceOrderCreateDto createDto, String deductNo, LocalDateTime expireTime) {
+    private StockDeductRecordEntity buildPreDeductRecord(ResourceOrderCreateDto createDto, String deductNo, LocalDateTime expireTime, Integer createMode) {
         StockDeductRecordEntity deductRecord = new StockDeductRecordEntity();
         deductRecord.setDeductNo(deductNo);
         deductRecord.setUserId(createDto.getUserId());
@@ -516,6 +520,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         deductRecord.setRetryCount(0);
         deductRecord.setNextRetryTime(LocalDateTime.now().plusSeconds(5));
         deductRecord.setLastError(null);
+        deductRecord.setCreateMode(createMode);
         return deductRecord;
     }
 

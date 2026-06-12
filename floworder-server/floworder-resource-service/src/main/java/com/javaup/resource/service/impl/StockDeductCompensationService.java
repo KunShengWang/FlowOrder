@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
+
 @Slf4j
 @Service
 public class StockDeductCompensationService {
@@ -30,6 +31,7 @@ public class StockDeductCompensationService {
     private static final int BATCH_SIZE = 100;
     private static final int MANUAL_REVIEW = 50;
     private static final int MAX_QUERY_ERROR_COUNT = 5;
+    private static final int CREATE_MODE_SYNC = 2;
 
     @Resource
     private StockDeductRecordMapper deductRecordMapper;
@@ -52,6 +54,7 @@ public class StockDeductCompensationService {
                 deductRecordMapper.selectList(
                         Wrappers.<StockDeductRecordEntity>lambdaQuery()
                                 .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)
+                                .eq(StockDeductRecordEntity::getCreateMode, CREATE_MODE_SYNC)
                                 .le(StockDeductRecordEntity::getNextRetryTime, LocalDateTime.now())// 小于等于当前时间
                                 .orderByAsc(StockDeductRecordEntity::getNextRetryTime)
                                 .last("LIMIT " + BATCH_SIZE)
@@ -279,6 +282,7 @@ public class StockDeductCompensationService {
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
                         .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)
+                        .eq(StockDeductRecordEntity::getCreateMode, CREATE_MODE_SYNC)
                         .le(StockDeductRecordEntity::getNextRetryTime, now)
                         // 60秒内不允许其他实例再次处理
                         .set(StockDeductRecordEntity::getNextRetryTime, now.plusSeconds(60))

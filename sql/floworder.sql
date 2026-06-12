@@ -5,7 +5,8 @@ CREATE DATABASE IF NOT EXISTS floworder
 USE floworder;
 
 DROP TABLE IF EXISTS fo_order_status_log;
-DROP TABLE IF EXISTS fo_mq_message_log;
+DROP TABLE IF EXISTS fo_mq_consume_log;
+DROP TABLE IF EXISTS fo_mq_outbox;
 DROP TABLE IF EXISTS fo_stock_deduct_record;
 DROP TABLE IF EXISTS fo_reservation_order;
 DROP TABLE IF EXISTS fo_stock_item;
@@ -70,6 +71,9 @@ CREATE TABLE fo_reservation_order (
     KEY idx_status_expire_time (status, expire_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='预约订单表';
 
+ALTER TABLE fo_reservation_order
+    ADD UNIQUE KEY uk_deduct_no (deduct_no);
+
 CREATE TABLE fo_stock_deduct_record (
     id BIGINT NOT NULL PRIMARY KEY,
     deduct_no VARCHAR(64) NOT NULL COMMENT '库存预扣流水号',
@@ -101,27 +105,77 @@ ALTER TABLE fo_stock_deduct_record
     ADD COLUMN query_error_count INT NOT NULL DEFAULT 0
         COMMENT '订单查询异常次数';
 
+ALTER TABLE fo_stock_deduct_record
+    ADD COLUMN create_mode TINYINT NOT NULL DEFAULT 2 COMMENT '创建模式：2同步 3异步';
+
+ALTER TABLE fo_stock_deduct_record
+    DROP INDEX idx_status_next_retry_time,
+    ADD INDEX idx_mode_status_next_retry_time
+        (create_mode, status, next_retry_time);
+
+
 UPDATE fo_stock_deduct_record
 SET next_retry_time = COALESCE(next_retry_time, expire_time, NOW())
 WHERE status = 10;
 
-CREATE TABLE fo_mq_message_log (
-    id BIGINT NOT NULL PRIMARY KEY,
-    message_id VARCHAR(64) NOT NULL COMMENT '消息ID',
-    biz_key VARCHAR(128) NOT NULL COMMENT '业务键，如orderNo/deductNo',
-    message_type VARCHAR(64) NOT NULL COMMENT '消息类型',
-    topic VARCHAR(128) NOT NULL COMMENT 'MQ topic',
-    content TEXT NOT NULL COMMENT '消息体JSON',
-    status TINYINT NOT NULL COMMENT '状态：0初始化 10已发送 20已消费 30失败 40重试中',
-    retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
-    next_retry_time DATETIME DEFAULT NULL COMMENT '下次重试时间',
-    last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后一次错误',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_message_id (message_id),
-    KEY idx_biz_key (biz_key),
-    KEY idx_status_next_retry_time (status, next_retry_time)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MQ消息日志表';
+CREATE TABLE fo_mq_outbox (
+  id BIGINT NOT NULL PRIMARY KEY,
+  message_id VARCHAR(64) NOT NULL COMMENT '消息唯一ID',
+
+  producer_service VARCHAR(64) NOT NULL COMMENT '生产者服务',
+  biz_key VARCHAR(128) NOT NULL COMMENT '业务键，如deductNo/orderNo',
+  message_type VARCHAR(64) NOT NULL COMMENT '消息类型',
+
+  exchange_name VARCHAR(128) NOT NULL COMMENT 'RabbitMQ交换机',
+  routing_key VARCHAR(128) NOT NULL COMMENT 'RabbitMQ路由键',
+  content TEXT NOT NULL COMMENT '消息JSON内容',
+
+  status TINYINT NOT NULL DEFAULT 0
+      COMMENT '0待发送 10发送中 20已确认 30待重试 40死亡',
+
+  retry_count INT NOT NULL DEFAULT 0 COMMENT '发送重试次数',
+  next_retry_time DATETIME DEFAULT NULL COMMENT '下次发送时间',
+  claim_until DATETIME DEFAULT NULL COMMENT '发送任务抢占租约截止时间',
+
+  last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后发送错误',
+  sent_at DATETIME DEFAULT NULL COMMENT 'Broker确认时间',
+
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ON UPDATE CURRENT_TIMESTAMP,
+
+  UNIQUE KEY uk_message_id (message_id),
+  UNIQUE KEY uk_producer_biz_type
+      (producer_service, biz_key, message_type),
+
+  KEY idx_producer_status_retry
+      (producer_service, status, next_retry_time),
+
+  KEY idx_status_claim
+      (status, claim_until)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    COMMENT='MQ事务Outbox表';
+
+CREATE TABLE fo_mq_consume_log (
+   id BIGINT NOT NULL PRIMARY KEY,
+   message_id VARCHAR(64) NOT NULL COMMENT '消息唯一ID',
+   consumer_group VARCHAR(64) NOT NULL COMMENT '消费者组',
+   message_type VARCHAR(64) NOT NULL COMMENT '消息类型',
+   biz_key VARCHAR(128) NOT NULL COMMENT '业务键',
+
+   status TINYINT NOT NULL DEFAULT 0
+       COMMENT '0处理中 10消费成功',
+
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+       ON UPDATE CURRENT_TIMESTAMP,
+
+   UNIQUE KEY uk_message_consumer
+       (message_id, consumer_group),
+
+   KEY idx_biz_key (biz_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    COMMENT='MQ消费幂等记录表';
 
 CREATE TABLE fo_order_status_log (
     id BIGINT NOT NULL PRIMARY KEY,

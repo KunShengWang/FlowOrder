@@ -65,4 +65,7 @@ public class StockDeductRecordEntity {
 
     /** 订单查询异常次数 */
     private Integer queryErrorCount;
+
+    /** 创建模式：2同步 3异步 */
+    private Integer createMode;
 }
