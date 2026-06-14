@@ -26,9 +26,4 @@ public class ResourceOrderController {
     public ApiResponse<String> createOrderV2(@RequestBody ResourceOrderCreateDto createDto){
         return ApiResponse.success(context.get(ResourceOrderVersionEnum.V2_VERSION.getVersion()).createOrder(createDto));
     }
-
-    @PostMapping("/create/v3")
-    public ApiResponse<String> createOrderV3(@RequestBody ResourceOrderCreateDto createDto){
-        return ApiResponse.success(context.get(ResourceOrderVersionEnum.V3_VERSION.getVersion()).createOrder(createDto));
-    }
 }

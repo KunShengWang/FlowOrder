@@ -13,9 +13,4 @@ public interface ResourceOrderService {
      * V2版本创建订单
      */
     String createV2(ResourceOrderCreateDto createDto);
-
-    /**
-     * V3版本创建订单
-     */
-    String createV3(ResourceOrderCreateDto createDto);
 }
