@@ -1,4 +1,4 @@
-package com.javaup.resource.entity;
+package com.javaup.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -39,7 +39,7 @@ public class MqOutboxEntity {
     private String bizKey;
 
     /**
-     * 消息类型，例如订单创建命令。
+     * 消息类型，例如订单创建成功或订单创建失败。
      */
     private String messageType;
 

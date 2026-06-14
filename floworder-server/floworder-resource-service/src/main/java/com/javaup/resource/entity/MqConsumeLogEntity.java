@@ -1,4 +1,4 @@
-package com.javaup.entity;
+package com.javaup.resource.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -34,7 +34,7 @@ public class MqConsumeLogEntity {
     private String consumerGroup;
 
     /**
-     * 消息类型，例如订单创建命令。
+     * 消息类型，例如订单创建成功或订单创建失败。
      */
     private String messageType;
 

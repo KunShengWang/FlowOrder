@@ -47,6 +47,7 @@
             <artifactId>floworder-service-common</artifactId>
             <version>${revision}</version>
         </dependency>
+        <!--redisson-common-framework-->
         <dependency>
             <groupId>com.javaup</groupId>
             <artifactId>floworder-redisson-common-framework</artifactId>
@@ -86,6 +87,11 @@
         <dependency>
             <groupId>com.alibaba.cloud</groupId>
             <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+        <!--RabbitMQ-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
     </dependencies>
 
