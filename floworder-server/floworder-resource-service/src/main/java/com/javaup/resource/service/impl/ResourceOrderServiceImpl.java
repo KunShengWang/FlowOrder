@@ -1,14 +1,18 @@
 package com.javaup.resource.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.client.OrderClient;
 import com.javaup.common.ApiResponse;
 import com.javaup.constant.RedisConstant;
 import com.javaup.dto.CreateOrderDto;
+import com.javaup.dto.OrderCreateMessage;
 import com.javaup.dto.OrderQueryDto;
 import com.javaup.dto.ResourceOrderCreateDto;
 import com.javaup.enums.StockLuaResultCodeEnum;
 import com.javaup.exception.BizException;
+import com.javaup.resource.entity.MqOutboxEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.entity.StockItemEntity;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
@@ -31,6 +35,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import static com.javaup.constant.OrderMqConstant.*;
+import static com.javaup.constant.RedisConstant.FLOWORDER_STOCK;
 import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_EXIST;
 import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_OPEN;
 import static com.javaup.enums.StockLuaResultCodeEnum.STOCK_CACHE_MISSING;
@@ -55,6 +61,8 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
 
     private static final int CREATE_MODE_ASYNC = 3;
 
+    private static final int OUTBOX_STATUS_NEW = 0;
+
     @Resource
     private StockItemMapper stockItemMapper;
 
@@ -75,6 +83,9 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
 
     @Resource
     private StockDeductLuaExecutor stockDeductLuaExecutor;
+
+    @Resource
+    private ObjectMapper objectMapper;
 
     /**
      * 并发场景下，相同的 requestId 同时请求，是数据库的唯一key做兜底和防御
@@ -112,7 +123,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             return handleOldDeductRecord(oldRecord,createDto);
         }
         // 构建库存key
-        String stockKey = RedisConstant.FLOWORDER_STOCK + createDto.getStockItemId();
+        String stockKey = FLOWORDER_STOCK + createDto.getStockItemId();
         // 扣减redis库存，如果扣减成功会返回库存剩余值
         // 有数据库requestId唯一索引做防御，不会引发多线程安全问题
         Long remainStock = deductRedisStockV2(createDto.getStockItemId(),stockKey,createDto.getQuantity());
@@ -197,6 +208,42 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             throw new BizException("订单已创建，库存状态确认处理中");
         }
         return realOrderNo;
+    }
+
+    @Override
+    public String createV3(ResourceOrderCreateDto createDto) {
+        // 请求幂等
+        StockDeductRecordEntity stockDeductRecord = getDeductRecordByRequestId(createDto.getRequestId());
+        if(stockDeductRecord != null){
+            return handleOldDeductRecord(stockDeductRecord,createDto);
+        }
+        // 库存redis缓存key
+        String stockKey = FLOWORDER_STOCK + createDto.getStockItemId();
+        // 扣减库存
+        deductRedisStockV2(createDto.getStockItemId(),stockKey,createDto.getQuantity());
+        String orderNo = generateOrderNo();
+        String deductNo = generateDeductNo();
+        String messageId = UUID.randomUUID().toString();
+        // 进行库存预扣并插入预扣记录
+        try{
+            // 构建预扣记录
+            StockDeductRecordEntity record = buildV3DeductRecord(createDto, deductNo, orderNo);
+            OrderCreateMessage message = buildOrderCreateMessage(createDto, deductNo, orderNo, messageId);
+            MqOutboxEntity outbox = buildOrderCreateOutbox(message);
+            stockDeductService.preDeductAndSaveOutbox(createDto, record, outbox);
+        }catch (DuplicateKeyException e){// 说明有两个线程同时对同一requestId进行了库存的预扣，需要回退一个线程的请求
+            compensateRedisSafely(stockKey,createDto.getQuantity(),e);
+            // redis库存回退之后需要给失败的线程返回信息
+            stockDeductRecord = getDeductRecordByRequestId(createDto.getRequestId());
+            if(stockDeductRecord != null){
+                return handleOldDeductRecord(stockDeductRecord,createDto);
+            }
+            throw e;
+        } catch (RuntimeException e) {
+            compensateRedisSafely(stockKey,createDto.getQuantity(),e);
+            throw e;
+        }
+        return orderNo;
     }
 
     /**
@@ -473,12 +520,17 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         }
         // 已预扣
         if (Objects.equals(oldRecord.getStatus(), STOCK_DEDUCT_STATUS_PRE_DEDUCTED)) {
+            if (Objects.equals(oldRecord.getCreateMode(), CREATE_MODE_ASYNC)
+                    && StringUtils.hasText(oldRecord.getOrderNo())) {
+                return oldRecord.getOrderNo();
+            }
             throw new BizException("请求正在处理中，请勿重复提交");
         }
         // 扣减失败
         if (Objects.equals(oldRecord.getStatus(), STOCK_DEDUCT_STATUS_FAILED)) {
             throw new BizException("该requestId对应的预约请求已失败，请更换requestId后重试");
         }
+        // 人工确认
         if (Objects.equals(oldRecord.getStatus(), STOCK_DEDUCT_STATUS_MANUAL_REVIEW)) {
             throw new BizException("订单创建结果人工确认中，请勿重复提交");
         }
@@ -627,5 +679,84 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             return "创建订单失败";
         }
         return reason.length() > 255 ? reason.substring(0, 255) : reason;
+    }
+
+    /**
+     * 创建v3版本预扣记录
+     */
+    private StockDeductRecordEntity buildV3DeductRecord(ResourceOrderCreateDto createDto, String deductNo, String orderNo) {
+        LocalDateTime now = LocalDateTime.now();
+        StockDeductRecordEntity record = new StockDeductRecordEntity();
+        record.setDeductNo(deductNo);
+        record.setOrderNo(orderNo);
+        record.setUserId(createDto.getUserId());
+        record.setResourceId(createDto.getResourceId());
+        record.setStockItemId(createDto.getStockItemId());
+        record.setQuantity(createDto.getQuantity());
+        record.setRequestId(createDto.getRequestId());
+        record.setStatus(STOCK_DEDUCT_STATUS_PRE_DEDUCTED);
+        record.setCreateMode(CREATE_MODE_ASYNC);
+        // 订单超时时间，不是MQ发送重试时间
+        record.setExpireTime(now.plusMinutes(DEFAULT_EXPIRE_MINUTES));
+        record.setRetryCount(0);
+        record.setQueryErrorCount(0);
+        // V3不由V2补偿任务查询订单
+        record.setNextRetryTime(null);
+        record.setLastError(null);
+        record.setReleaseReason(null);
+        record.setCreatedAt(now);
+        record.setUpdatedAt(now);
+        return record;
+    }
+
+    /**
+     * 创建订单创建消息
+     */
+    private OrderCreateMessage buildOrderCreateMessage(
+            ResourceOrderCreateDto createDto,
+            String deductNo,
+            String orderNo,
+            String messageId) {
+        LocalDateTime now = LocalDateTime.now();
+        CreateOrderDto orderDto = buildCreateOrderDto(createDto, orderNo, deductNo, now.plusMinutes(DEFAULT_EXPIRE_MINUTES));
+        OrderCreateMessage message = new OrderCreateMessage();
+        message.setMessageId(messageId);
+        message.setEventType(ORDER_CREATE_COMMAND);
+        message.setOccurredAt(now);
+        message.setData(orderDto);
+        return message;
+    }
+
+    private MqOutboxEntity buildOrderCreateOutbox(OrderCreateMessage message) {
+        LocalDateTime now = LocalDateTime.now();
+        String content;
+        try {
+            content = objectMapper.writeValueAsString(message);
+        } catch (JsonProcessingException exception) {
+            log.error(
+                    "订单创建消息序列化失败, messageId={}, deductNo={}",
+                    message.getMessageId(),
+                    message.getData().getDeductNo(),
+                    exception
+            );
+            throw new BizException("订单创建消息序列化失败");
+        }
+        MqOutboxEntity outbox = new MqOutboxEntity();
+        outbox.setMessageId(message.getMessageId());
+        outbox.setProducerService(RESOURCE_SERVICE);
+        outbox.setBizKey(message.getData().getDeductNo());
+        outbox.setMessageType(message.getEventType());
+        outbox.setExchangeName(ORDER_CREATE_EXCHANGE);
+        outbox.setRoutingKey(ORDER_CREATE_ROUTING_KEY);
+        outbox.setContent(content);
+        outbox.setStatus(OUTBOX_STATUS_NEW);
+        outbox.setRetryCount(0);
+        outbox.setNextRetryTime(now);
+        outbox.setClaimUntil(null);
+        outbox.setLastError(null);
+        outbox.setSentAt(null);
+        outbox.setCreatedAt(now);
+        outbox.setUpdatedAt(now);
+        return outbox;
     }
 }
