@@ -1,6 +1,7 @@
 package com.javaup.mq.service;
 
 
+import com.javaup.dto.MqOutboxAdminDto;
 import com.javaup.entity.MqOutboxEntity;
 
 import java.util.List;
@@ -21,5 +22,11 @@ public interface MqOutboxService {
 
     void markFailed(Long id, Integer currentRetryCount, String error);
 
-    int reclaimExpiredClaims();
+    void reclaimExpiredClaims();
+
+    List<MqOutboxAdminDto> findDead(int limit);
+
+    void retryDead(String messageId);
+
+    void replaySent(String messageId);
 }

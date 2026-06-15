@@ -1,9 +1,9 @@
 package com.javaup.controller;
 
 import com.javaup.common.ApiResponse;
-import com.javaup.dto.CreateOrderDto;
-import com.javaup.dto.OrderQueryDto;
+import com.javaup.dto.*;
 import com.javaup.service.OrderService;
+import com.javaup.service.OrderStateService;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,6 +13,9 @@ public class OrderController {
 
     @Resource
     private OrderService orderService;
+
+    @Resource
+    private OrderStateService orderStateService;
 
     /**
      * 创建订单
@@ -28,5 +31,28 @@ public class OrderController {
     @GetMapping("/query")
     public ApiResponse<OrderQueryDto> queryByRequestId(@RequestParam("requestId") String requestId){
         return ApiResponse.success(orderService.queryByRequestId(requestId));
+    }
+
+    /**
+     * 订单确认
+     */
+    @PostMapping("/confirm")
+    public ApiResponse<Void> confirm(@RequestBody OrderConfirmDto dto) {
+        orderStateService.confirm(dto.getOrderNo(), dto.getUserId());
+        return ApiResponse.success();
+    }
+
+    /**
+     * 订单取消
+     */
+    @PostMapping("/cancel")
+    public ApiResponse<Void> cancel(@RequestBody OrderCancelDto dto) {
+        orderStateService.cancel(dto.getOrderNo(), dto.getUserId(), dto.getReason());
+        return ApiResponse.success();
+    }
+
+    @GetMapping("/detail")
+    public ApiResponse<OrderStateDetailDto> detail(@RequestParam String orderNo, @RequestParam Long userId) {
+        return ApiResponse.success(orderStateService.detail(orderNo, userId));
     }
 }

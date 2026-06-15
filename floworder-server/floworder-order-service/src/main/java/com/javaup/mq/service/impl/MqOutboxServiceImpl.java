@@ -1,6 +1,7 @@
 package com.javaup.mq.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.javaup.dto.MqOutboxAdminDto;
 import com.javaup.entity.MqOutboxEntity;
 import com.javaup.exception.BizException;
 import com.javaup.mapper.MqOutboxMapper;
@@ -115,10 +116,10 @@ public class MqOutboxServiceImpl implements MqOutboxService {
     }
 
     @Override
-    public int reclaimExpiredClaims() {
+    public void reclaimExpiredClaims() {
         LocalDateTime now = LocalDateTime.now();
 
-        return mqOutboxMapper.update(
+        mqOutboxMapper.update(
                 null,
                 Wrappers.<MqOutboxEntity>lambdaUpdate()
                         .eq(MqOutboxEntity::getProducerService, ORDER_SERVICE)
@@ -129,6 +130,67 @@ public class MqOutboxServiceImpl implements MqOutboxService {
                         .set(MqOutboxEntity::getClaimUntil, null)
                         .set(MqOutboxEntity::getLastError, "发送租约过期，等待重新发送")
         );
+    }
+
+    @Override
+    public List<MqOutboxAdminDto> findDead(int limit) {
+        int queryLimit = Math.min(Math.max(limit, 1), 500);
+
+        return mqOutboxMapper.selectList(
+                Wrappers.<MqOutboxEntity>lambdaQuery()
+                        .eq(MqOutboxEntity::getProducerService, ORDER_SERVICE)
+                        .eq(MqOutboxEntity::getStatus, STATUS_DEAD)
+                        .orderByDesc(MqOutboxEntity::getUpdatedAt)
+                        .last("limit " + queryLimit)
+        ).stream().map(this::toAdminDto).toList();
+    }
+
+    @Override
+    public void retryDead(String messageId) {
+        resetOutbox(messageId, STATUS_DEAD, "人工恢复死亡消息");
+    }
+
+    @Override
+    public void replaySent(String messageId) {
+        resetOutbox(messageId, STATUS_SENT, "人工重放已发送消息");
+    }
+
+    private void resetOutbox(String messageId, int expectedStatus, String reason) {
+        if (!StringUtils.hasText(messageId)) {
+            throw new BizException("messageId不能为空");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = mqOutboxMapper.update(
+                null,
+                Wrappers.<MqOutboxEntity>lambdaUpdate()
+                        .eq(MqOutboxEntity::getMessageId, messageId)
+                        .eq(MqOutboxEntity::getProducerService, ORDER_SERVICE)
+                        .eq(MqOutboxEntity::getStatus, expectedStatus)
+                        .set(MqOutboxEntity::getStatus, STATUS_RETRY)
+                        .set(MqOutboxEntity::getRetryCount, 0)
+                        .set(MqOutboxEntity::getNextRetryTime, now)
+                        .set(MqOutboxEntity::getClaimUntil, null)
+                        .set(MqOutboxEntity::getSentAt, null)
+                        .set(MqOutboxEntity::getLastError, reason)
+                        .set(MqOutboxEntity::getUpdatedAt, now)
+        );
+        if (rows != 1) {
+            throw new BizException("Outbox不存在、状态已变化或不属于当前服务");
+        }
+    }
+
+    private MqOutboxAdminDto toAdminDto(MqOutboxEntity entity) {
+        MqOutboxAdminDto dto = new MqOutboxAdminDto();
+        dto.setMessageId(entity.getMessageId());
+        dto.setProducerService(entity.getProducerService());
+        dto.setBizKey(entity.getBizKey());
+        dto.setMessageType(entity.getMessageType());
+        dto.setStatus(entity.getStatus());
+        dto.setRetryCount(entity.getRetryCount());
+        dto.setLastError(entity.getLastError());
+        dto.setNextRetryTime(entity.getNextRetryTime());
+        dto.setCreatedAt(entity.getCreatedAt());
+        return dto;
     }
 
     private LocalDateTime calculateNextRetryTime(int retryCount) {

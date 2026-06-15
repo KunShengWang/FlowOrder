@@ -51,3 +51,7 @@ spring:
   redisson:
     address: redis://127.0.0.1:6379
     database: 1
+# 无鉴权管理接口
+floworder:
+  admin:
+    enabled: false

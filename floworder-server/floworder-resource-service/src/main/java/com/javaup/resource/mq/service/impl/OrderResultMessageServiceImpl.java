@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.util.Objects;
 
 import static com.javaup.constant.OrderMqConstant.*;
+import static com.javaup.resource.enums.StockDeductStatusEnum.*;
 
 @Service
 public class OrderResultMessageServiceImpl implements OrderResultMessageService {
@@ -58,8 +59,17 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
     }
 
     private void confirm(StockDeductRecordEntity record, String orderNo) {
-        if (Objects.equals(record.getStatus(), 20)
-                && Objects.equals(record.getOrderNo(), orderNo)) {
+        if (Objects.equals(record.getStatus(), ORDER_CREATED.getCode()) && Objects.equals(record.getOrderNo(), orderNo)) {
+            return;
+        }
+        /*
+         * 状态消息已经先到达：
+         * RELEASED 表示订单已取消或超时；
+         * SOLD 表示订单已经确认。
+         *
+         * 创建成功消息此时属于迟到消息，不能把终态改回 ORDER_CREATED。
+         */
+        if (Objects.equals(record.getStatus(), RELEASED.getCode()) || Objects.equals(record.getStatus(), SOLD.getCode())) {
             return;
         }
         int rows = stockDeductRecordMapper.update(
@@ -67,8 +77,8 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
                         .eq(StockDeductRecordEntity::getCreateMode, 3)
-                        .eq(StockDeductRecordEntity::getStatus, 10)
-                        .set(StockDeductRecordEntity::getStatus, 20)
+                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode())
+                        .set(StockDeductRecordEntity::getStatus, ORDER_CREATED.getCode())
                         .set(StockDeductRecordEntity::getOrderNo, orderNo)
         );
         if (rows != 1) {
