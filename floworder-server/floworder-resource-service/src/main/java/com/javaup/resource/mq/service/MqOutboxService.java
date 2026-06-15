@@ -1,5 +1,6 @@
 package com.javaup.resource.mq.service;
 
+import com.javaup.dto.MqOutboxAdminDto;
 import com.javaup.resource.entity.MqOutboxEntity;
 
 import java.util.List;
@@ -30,4 +31,10 @@ public interface MqOutboxService {
      * MQ Outbox 消息发送租约回收
      */
     void reclaimExpiredClaims();
+
+    List<MqOutboxAdminDto> findDead(int limit);
+
+    void retryDead(String messageId);
+
+    void replaySent(String messageId);
 }

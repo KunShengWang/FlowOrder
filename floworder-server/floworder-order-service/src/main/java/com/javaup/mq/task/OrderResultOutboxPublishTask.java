@@ -5,10 +5,16 @@ import com.javaup.mq.publisher.OrderResultOutboxPublisher;
 import com.javaup.mq.service.MqOutboxService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(
+        name = "floworder.mq.outbox-publish-enabled",
+        havingValue = "true",
+        matchIfMissing = true
+)
 @Slf4j
 public class OrderResultOutboxPublishTask {
 

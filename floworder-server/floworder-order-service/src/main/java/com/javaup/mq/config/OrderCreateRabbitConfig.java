@@ -55,4 +55,11 @@ public class OrderCreateRabbitConfig {
                 .durable(true)
                 .build();
     }
+
+    @Bean
+    public DirectExchange orderStateExchange() {
+        return ExchangeBuilder.directExchange(ORDER_STATE_EXCHANGE)
+                .durable(true)
+                .build();
+    }
 }

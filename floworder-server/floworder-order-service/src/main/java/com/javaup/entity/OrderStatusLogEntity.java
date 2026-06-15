@@ -1,5 +1,7 @@
 package com.javaup.entity;
 
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -13,6 +15,7 @@ import java.time.LocalDateTime;
 public class OrderStatusLogEntity {
 
     /** 主键ID */
+    @TableId(type = IdType.ASSIGN_ID)
     private Long id;
 
     /** 预约单号 */

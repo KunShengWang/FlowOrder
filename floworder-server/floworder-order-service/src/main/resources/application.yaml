@@ -33,3 +33,7 @@ spring:
       simple:
         acknowledge-mode: manual #手动确认队列消息
         default-requeue-rejected: false # 当消费者监听方法处理消息失败，并且消息被拒绝时，默认不要把这条消息重新放回队列。消费异常后，消息不再回到原队列。如果配置了死信队列，则进入死信队列；如果没有配置死信队列，则消息可能被丢弃。
+# 无鉴权管理接口
+floworder:
+  admin:
+    enabled: false

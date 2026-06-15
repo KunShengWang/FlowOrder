@@ -83,7 +83,7 @@ CREATE TABLE fo_stock_deduct_record (
     stock_item_id BIGINT NOT NULL COMMENT '库存项ID',
     quantity INT NOT NULL COMMENT '预扣数量',
     request_id VARCHAR(128) NOT NULL COMMENT '请求幂等ID',
-    status TINYINT NOT NULL COMMENT '状态：10已预扣 20已确认 30已释放 40失败 50人工确认',
+    status TINYINT NOT NULL COMMENT '状态：10已预扣 20订单已创建 30已释放 40失败 50人工确认 60已成交',
     expire_time DATETIME DEFAULT NULL COMMENT '预扣过期时间',
     release_reason VARCHAR(255) DEFAULT NULL COMMENT '释放原因',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
