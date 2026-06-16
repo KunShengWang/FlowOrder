@@ -24,7 +24,10 @@ public class OrderResultOutboxPublishTask {
     @Resource
     private OrderResultOutboxPublisher publisher;
 
-    @Scheduled(fixedDelayString = "${floworder.mq.outbox-delay:1000}")
+    @Scheduled(
+            fixedDelayString = "${floworder.mq.outbox-delay:1000}",
+            scheduler = "orderOutboxTaskScheduler"
+    )
     public void publish() {
         outboxService.reclaimExpiredClaims();
 

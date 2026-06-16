@@ -1,12 +1,15 @@
 server:
   port: 8088
+  shutdown: graceful
 
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   application:
     name: floworder-gateway-service
   profiles:
     # 微服务调用
-    active: pro
+    active: ${SPRING_PROFILES_ACTIVE:pro}
   # nacos
   cloud:
     nacos:
@@ -14,3 +17,19 @@ spring:
         server-addr: 127.0.0.1:8848
         username: nacos
         password: nacos
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,threaddump
+  endpoint:
+    health:
+      show-details: always
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: floworder-gateway-service
+    version: v5

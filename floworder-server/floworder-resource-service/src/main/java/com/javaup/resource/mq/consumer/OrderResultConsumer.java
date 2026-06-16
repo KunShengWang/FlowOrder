@@ -31,7 +31,10 @@ public class OrderResultConsumer {
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
-    @RabbitListener(queues = ORDER_RESULT_QUEUE)
+    @RabbitListener(
+            queues = ORDER_RESULT_QUEUE,
+            containerFactory = "orderResultListenerContainerFactory"
+    )
     public void consume(Message rabbitMessage, Channel channel) throws IOException {
         long tag = rabbitMessage.getMessageProperties().getDeliveryTag();
         OrderCreateResultMessage result;

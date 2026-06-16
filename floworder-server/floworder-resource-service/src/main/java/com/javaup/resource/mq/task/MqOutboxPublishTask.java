@@ -26,7 +26,10 @@ public class MqOutboxPublishTask {
     @Resource
     private OutboxMessagePublisher publisher;
 
-    @Scheduled(fixedDelayString = "${floworder.mq.outbox-delay:1000}")
+    @Scheduled(
+            fixedDelayString = "${floworder.mq.outbox-delay:1000}",
+            scheduler = "resourceOutboxTaskScheduler"
+    )
     public void publish() {
         // MQ Outbox 消息发送租约回收
         mqOutboxService.reclaimExpiredClaims();

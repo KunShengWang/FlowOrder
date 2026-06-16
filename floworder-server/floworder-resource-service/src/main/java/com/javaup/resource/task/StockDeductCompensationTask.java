@@ -20,10 +20,9 @@ public class StockDeductCompensationTask {
     private StockDeductCompensationService compensationService;
 
     @Scheduled(
-            fixedDelayString =
-                    "${floworder.compensation.fixed-delay-ms:5000}",
-            initialDelayString =
-                    "${floworder.compensation.initial-delay-ms:10000}"
+            fixedDelayString = "${floworder.compensation.fixed-delay-ms:5000}",
+            initialDelayString = "${floworder.compensation.initial-delay-ms:10000}",
+            scheduler = "stockCompensationTaskScheduler"
     )
     public void compensateExpiredDeductRecords() {
         try {

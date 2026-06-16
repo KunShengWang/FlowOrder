@@ -22,7 +22,7 @@
         <java.version>17</java.version>
         <spring.boot.version>3.5.14</spring.boot.version>
         <spring.cloud.version>2025.0.0</spring.cloud.version>
-        <spring.cloud.alibaba.version>2023.0.3.3</spring.cloud.alibaba.version>
+        <spring.cloud.alibaba.version>2025.0.0.0</spring.cloud.alibaba.version>
         <lombok.version>1.18.46</lombok.version>
         <mybatis-plus.version>3.5.15</mybatis-plus.version>
     </properties>
