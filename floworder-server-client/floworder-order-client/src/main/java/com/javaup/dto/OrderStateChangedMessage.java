@@ -8,8 +8,10 @@ import java.time.LocalDateTime;
 public class OrderStateChangedMessage {
 
     private String messageId;
+    private String traceId;
     private String eventType;
 
+    private String requestId;
     private String orderNo;
     private String deductNo;
     private Long stockItemId;

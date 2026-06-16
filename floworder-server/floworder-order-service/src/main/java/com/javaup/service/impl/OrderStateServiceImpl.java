@@ -32,6 +32,9 @@ import com.javaup.enums.OrderEventEnum;
 import java.util.List;
 
 import static com.javaup.enums.OrderOperatorTypeEnum.SYSTEM;
+import org.slf4j.MDC;
+
+import static com.javaup.trace.TraceConstant.TRACE_ID;
 
 @Service
 public class OrderStateServiceImpl implements OrderStateService {
@@ -287,7 +290,9 @@ public class OrderStateServiceImpl implements OrderStateService {
 
         OrderStateChangedMessage message = new OrderStateChangedMessage();
         message.setMessageId(messageId);
+        message.setTraceId(MDC.get(TRACE_ID));
         message.setEventType(eventType);
+        message.setRequestId(order.getRequestId());
         message.setOrderNo(order.getOrderNo());
         message.setDeductNo(order.getDeductNo());
         message.setStockItemId(order.getStockItemId());

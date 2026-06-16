@@ -10,10 +10,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
-
 import java.io.IOException;
-
 import static com.javaup.constant.OrderMqConstant.ORDER_CREATE_QUEUE;
+import org.slf4j.MDC;
+import org.springframework.util.StringUtils;
+import static com.javaup.trace.TraceConstant.REQUEST_ID;
+import static com.javaup.trace.TraceConstant.TRACE_ID;
 
 @Component
 @Slf4j
@@ -43,42 +45,62 @@ public class OrderCreateConsumer {
             channel.basicReject(deliveryTag, false);
             return;
         }
-
-        Exception lastException = null;
-
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            try {
-                messageService.consume(command);
-                channel.basicAck(deliveryTag, false);
-                return;
-            } catch (BizException businessException) {// 明确的业务异常，创建订单这条命令已经有了明确的失败结果，并且失败结果已经可靠保存，不需要再次消费。
+        putTraceContext(command);
+        log.info(
+                "收到订单创建消息, messageId={}, requestId={}, deductNo={}, orderNo={}",
+                command.getMessageId(),
+                command.getData() == null ? null : command.getData().getRequestId(),
+                command.getData() == null ? null : command.getData().getDeductNo(),
+                command.getData() == null ? null : command.getData().getOrderNo()
+        );
+        try{
+            Exception lastException = null;
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 try {
-                    messageService.recordFailure(command, businessException.getMessage());
+                    messageService.consume(command);
                     channel.basicAck(deliveryTag, false);
                     return;
-                } catch (Exception failureException) {
-                    lastException = failureException;
-                }
-            } catch (Exception exception) {// 技术异常，它可能只是暂时故障，可以重试
-                lastException = exception;
-            }
-
-            if (attempt < MAX_ATTEMPTS) {
-                try {
-                    Thread.sleep(attempt * 200L);
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
+                } catch (BizException businessException) {// 明确的业务异常，创建订单这条命令已经有了明确的失败结果，并且失败结果已经可靠保存，不需要再次消费。
+                    try {
+                        messageService.recordFailure(command, businessException.getMessage());
+                        channel.basicAck(deliveryTag, false);
+                        return;
+                    } catch (Exception failureException) {
+                        lastException = failureException;
+                    }
+                } catch (Exception exception) {// 技术异常，它可能只是暂时故障，可以重试
                     lastException = exception;
-                    break;
+                }
+
+                if (attempt < MAX_ATTEMPTS) {
+                    try {
+                        Thread.sleep(attempt * 200L);
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        lastException = exception;
+                        break;
+                    }
                 }
             }
-        }
 
-        log.error(
-                "订单创建消息消费失败, messageId={}",
-                command.getMessageId(),
-                lastException
-        );
-        channel.basicNack(deliveryTag, false, false);
+            log.error(
+                    "订单创建消息消费失败, messageId={}",
+                    command.getMessageId(),
+                    lastException
+            );
+            channel.basicNack(deliveryTag, false, false);
+        } finally {
+            MDC.remove(TRACE_ID);
+            MDC.remove(REQUEST_ID);
+        }
+    }
+
+    private void putTraceContext(OrderCreateMessage command) {
+        if (StringUtils.hasText(command.getTraceId())) {
+            MDC.put(TRACE_ID, command.getTraceId());
+        }
+        if (command.getData() != null && StringUtils.hasText(command.getData().getRequestId())) {
+            MDC.put(REQUEST_ID, command.getData().getRequestId());
+        }
     }
 }

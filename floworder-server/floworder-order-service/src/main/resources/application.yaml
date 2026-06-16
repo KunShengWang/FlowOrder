@@ -71,3 +71,7 @@ info:
   app:
     name: floworder-order-service
     version: v5
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [traceId=%X{traceId}] [requestId=%X{requestId}] %logger{36} - %msg%n"
