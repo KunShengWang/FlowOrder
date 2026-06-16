@@ -5,8 +5,10 @@ import com.javaup.dto.*;
 import com.javaup.service.OrderService;
 import com.javaup.service.OrderStateService;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
+@Slf4j
 @RestController
 @RequestMapping("/order")
 public class OrderController {
@@ -22,6 +24,14 @@ public class OrderController {
      */
     @PostMapping(value = "/create")
     public ApiResponse<String> create(@RequestBody CreateOrderDto createOrderDto) {
+        log.info(
+                "收到订单创建请求, userId={}, resourceId={}, stockItemId={}, quantity={}, requestId={}",
+                createOrderDto.getUserId(),
+                createOrderDto.getResourceId(),
+                createOrderDto.getStockItemId(),
+                createOrderDto.getQuantity(),
+                createOrderDto.getRequestId()
+        );
         return ApiResponse.success(orderService.create(createOrderDto));
     }
 
@@ -29,7 +39,8 @@ public class OrderController {
      * 订单查询
      */
     @GetMapping("/query")
-    public ApiResponse<OrderQueryDto> queryByRequestId(@RequestParam("requestId") String requestId){
+    public ApiResponse<OrderQueryDto> queryByRequestId(@RequestParam("requestId") String requestId) {
+        log.info("收到订单查询请求, requestId={}", requestId);
         return ApiResponse.success(orderService.queryByRequestId(requestId));
     }
 

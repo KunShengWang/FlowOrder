@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 public class OrderCreateResultMessage {
 
     private String messageId;
+    private String traceId;
     private String eventType;
     private LocalDateTime occurredAt;
 

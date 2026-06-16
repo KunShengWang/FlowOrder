@@ -9,6 +9,8 @@ public class OrderCreateMessage {
 
     private String messageId;
 
+    private String traceId;
+
     private String eventType;
 
     private LocalDateTime occurredAt;

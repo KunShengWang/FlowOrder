@@ -15,6 +15,11 @@ import java.io.IOException;
 
 import static com.javaup.constant.OrderMqConstant.ORDER_RESULT_QUEUE;
 import static com.javaup.constant.RedisConstant.FLOWORDER_STOCK;
+import org.slf4j.MDC;
+import org.springframework.util.StringUtils;
+
+import static com.javaup.trace.TraceConstant.REQUEST_ID;
+import static com.javaup.trace.TraceConstant.TRACE_ID;
 
 @Component
 @Slf4j
@@ -45,41 +50,64 @@ public class OrderResultConsumer {
             channel.basicReject(tag, false);
             return;
         }
-        Exception lastException = null;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            try {
-                Long stockItemId = resultService.handle(result);
-                if (stockItemId != null) {
-                    stringRedisTemplate.delete(FLOWORDER_STOCK + stockItemId);
-                }
-                channel.basicAck(tag, false);
-                return;
-            } catch (IllegalArgumentException protocolException) {
-                log.error("订单结果消息协议错误, messageId={}",
-                        result.getMessageId(), protocolException);
-                channel.basicReject(tag, false);
-                return;
-            } catch (Exception exception) {
-                lastException = exception;
-                log.warn("订单结果处理失败, messageId={}, attempt={}",
-                        result.getMessageId(), attempt, exception);
-            }
-
-            if (attempt < MAX_ATTEMPTS) {
+        putTraceContext(result);
+        try{
+            log.info(
+                    "收到订单结果消息, messageId={}, requestId={}, deductNo={}, orderNo={}, success={}",
+                    result.getMessageId(),
+                    result.getRequestId(),
+                    result.getDeductNo(),
+                    result.getOrderNo(),
+                    result.getSuccess()
+            );
+            Exception lastException = null;
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 try {
-                    Thread.sleep(attempt * 200L);
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
+                    Long stockItemId = resultService.handle(result);
+                    if (stockItemId != null) {
+                        stringRedisTemplate.delete(FLOWORDER_STOCK + stockItemId);
+                    }
+                    channel.basicAck(tag, false);
+                    return;
+                } catch (IllegalArgumentException protocolException) {
+                    log.error("订单结果消息协议错误, messageId={}",
+                            result.getMessageId(), protocolException);
+                    channel.basicReject(tag, false);
+                    return;
+                } catch (Exception exception) {
                     lastException = exception;
-                    break;
+                    log.warn("订单结果处理失败, messageId={}, attempt={}",
+                            result.getMessageId(), attempt, exception);
+                }
+
+                if (attempt < MAX_ATTEMPTS) {
+                    try {
+                        Thread.sleep(attempt * 200L);
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        lastException = exception;
+                        break;
+                    }
                 }
             }
+            log.error(
+                    "订单结果处理失败, messageId={}",
+                    result.getMessageId(),
+                    lastException
+            );
+            channel.basicNack(tag, false, false);
+        }finally {
+            MDC.remove(TRACE_ID);
+            MDC.remove(REQUEST_ID);
         }
-        log.error(
-                "订单结果处理失败, messageId={}",
-                result.getMessageId(),
-                lastException
-        );
-        channel.basicNack(tag, false, false);
+    }
+
+    private void putTraceContext(OrderCreateResultMessage result) {
+        if (StringUtils.hasText(result.getTraceId())) {
+            MDC.put(TRACE_ID, result.getTraceId());
+        }
+        if (StringUtils.hasText(result.getRequestId())) {
+            MDC.put(REQUEST_ID, result.getRequestId());
+        }
     }
 }

@@ -140,6 +140,7 @@ public class OrderCreateMessageServiceImpl implements OrderCreateMessageService 
         String resultMessageId = UUID.randomUUID().toString();
 
         result.setMessageId(resultMessageId);
+        result.setTraceId(command.getTraceId());
         result.setEventType(success ? ORDER_CREATE_SUCCEEDED : ORDER_CREATE_FAILED);
         result.setOccurredAt(LocalDateTime.now());
         result.setRequestId(command.getData().getRequestId());

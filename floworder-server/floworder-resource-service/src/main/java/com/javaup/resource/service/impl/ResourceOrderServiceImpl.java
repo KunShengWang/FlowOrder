@@ -23,6 +23,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import org.slf4j.MDC;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,7 @@ import static com.javaup.constant.RedisConstant.FLOWORDER_STOCK;
 import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_EXIST;
 import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_OPEN;
 import static com.javaup.enums.StockLuaResultCodeEnum.STOCK_CACHE_MISSING;
+import static com.javaup.trace.TraceConstant.TRACE_ID;
 
 @Service
 @Slf4j
@@ -714,6 +716,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         CreateOrderDto orderDto = buildCreateOrderDto(createDto, orderNo, deductNo, now.plusMinutes(DEFAULT_EXPIRE_MINUTES));
         OrderCreateMessage message = new OrderCreateMessage();
         message.setMessageId(messageId);
+        message.setTraceId(MDC.get(TRACE_ID));
         message.setEventType(ORDER_CREATE_COMMAND);
         message.setOccurredAt(now);
         message.setData(orderDto);
