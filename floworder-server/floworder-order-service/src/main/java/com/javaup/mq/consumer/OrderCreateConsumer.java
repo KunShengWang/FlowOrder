@@ -27,7 +27,10 @@ public class OrderCreateConsumer {
     @Resource
     private OrderCreateMessageService messageService;
 
-    @RabbitListener(queues = ORDER_CREATE_QUEUE)
+    @RabbitListener(
+            queues = ORDER_CREATE_QUEUE,
+            containerFactory = "orderCreateListenerContainerFactory"
+    )
     public void consume(Message rabbitMessage, Channel channel) throws IOException {
         // Broker/Channel 生成，用来标识这次投递要被确认
         long deliveryTag = rabbitMessage.getMessageProperties().getDeliveryTag();

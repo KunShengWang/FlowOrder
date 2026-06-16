@@ -31,7 +31,10 @@ public class OrderStateConsumer {
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
-    @RabbitListener(queues = ORDER_STATE_QUEUE)
+    @RabbitListener(
+            queues = ORDER_STATE_QUEUE,
+            containerFactory = "orderStateListenerContainerFactory"
+    )
     public void consume(Message rabbitMessage, Channel channel) throws IOException {
         long deliveryTag = rabbitMessage.getMessageProperties().getDeliveryTag();
         OrderStateChangedMessage message;

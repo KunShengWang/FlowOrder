@@ -25,7 +25,8 @@ public class OrderTimeoutTask {
 
     @Scheduled(
             fixedDelayString = "${floworder.order.timeout-scan-delay:5000}",
-            initialDelayString = "${floworder.order.timeout-scan-initial-delay:10000}"
+            initialDelayString = "${floworder.order.timeout-scan-initial-delay:10000}",
+            scheduler = "orderTimeoutTaskScheduler"
     )
     public void closeExpiredOrders() {
         List<Long> orderIds = orderStateService.findExpiredOrderIds(BATCH_SIZE);
