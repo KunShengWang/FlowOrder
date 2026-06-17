@@ -15,7 +15,7 @@ public final class OrderMqConstant {
     /**
      * 订单创建路由键
      */
-    public static final String ORDER_CREATE_ROUTING_KEY = "order.create";
+    public static final String  ORDER_CREATE_ROUTING_KEY = "order.create";
 
     /**
      * 订单创建结果交换机

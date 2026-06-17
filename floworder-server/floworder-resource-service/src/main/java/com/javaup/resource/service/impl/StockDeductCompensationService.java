@@ -49,7 +49,6 @@ public class StockDeductCompensationService {
     private StockDeductLuaExecutor stockDeductLuaExecutor;
 
     public void compensateExpiredRecords() {
-        log.info("开始扫描过期库存预扣记录");
         List<StockDeductRecordEntity> records =
                 deductRecordMapper.selectList(
                         Wrappers.<StockDeductRecordEntity>lambdaQuery()
@@ -59,7 +58,6 @@ public class StockDeductCompensationService {
                                 .orderByAsc(StockDeductRecordEntity::getNextRetryTime)
                                 .last("LIMIT " + BATCH_SIZE)
                 );
-        log.info("本轮扫描到 {} 条待补偿记录", records.size());
         for (StockDeductRecordEntity record : records) {
             // 只有更新成功的实例获得处理权
             if (!claimRecord(record)) {

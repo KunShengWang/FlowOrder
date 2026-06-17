@@ -381,8 +381,8 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         }
         // 已预扣
         if (Objects.equals(oldRecord.getStatus(), STOCK_DEDUCT_STATUS_PRE_DEDUCTED)) {
-            if (Objects.equals(oldRecord.getCreateMode(), CREATE_MODE_ASYNC)
-                    && StringUtils.hasText(oldRecord.getOrderNo())) {
+            // TODO 如果是异步的方式，如果已被预扣也需要返回订单号
+            if (Objects.equals(oldRecord.getCreateMode(), CREATE_MODE_ASYNC) && StringUtils.hasText(oldRecord.getOrderNo())) {
                 return oldRecord.getOrderNo();
             }
             throw new BizException("请求正在处理中，请勿重复提交");

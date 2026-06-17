@@ -42,6 +42,7 @@ public class OrderCreateConsumer {
             command = objectMapper.readValue(rabbitMessage.getBody(), OrderCreateMessage.class);
         } catch (Exception exception) {
             log.error("订单创建消息反序列化失败", exception);
+            // 消息体损坏（反序列化失败），重试也没用，直接拒接进入死信队列
             channel.basicReject(deliveryTag, false);
             return;
         }
