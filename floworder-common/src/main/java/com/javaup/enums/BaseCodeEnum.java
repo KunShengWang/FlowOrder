@@ -29,7 +29,13 @@ public enum BaseCodeEnum {
 
     ORDER_REQUEST_ID_EMPTY(41007,"requestId不能为空"),
 
-    PROGRAM_ORDER_STRATEGY_NOT_EXIST(50011,"创建订单策略不存在");
+    PROGRAM_ORDER_STRATEGY_NOT_EXIST(50011,"创建订单策略不存在"),
+
+    ORDER_DEDUCT_NO_EMPTY(41008, "库存预扣流水号不能为空"),
+
+    ORDER_EXPIRE_TIME_INVALID(41009, "订单过期时间必须晚于当前时间"),
+
+    ORDER_IDEMPOTENT_CONFLICT(41010, "requestId已存在，但订单参数不一致");
 
     private final Integer code;
 

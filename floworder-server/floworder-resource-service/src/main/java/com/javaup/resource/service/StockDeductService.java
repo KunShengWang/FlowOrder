@@ -1,6 +1,7 @@
 package com.javaup.resource.service;
 
 import com.javaup.dto.ResourceOrderCreateDto;
+import com.javaup.resource.entity.MqOutboxEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 
 public interface StockDeductService {
@@ -15,4 +16,9 @@ public interface StockDeductService {
     void confirm(String deductNo, String orderNo);
 
     void release(ResourceOrderCreateDto dto, String deductNo, String reason);
+
+    /**
+     * 库存预扣并保存mq消息
+     */
+    void preDeductAndSaxveOutbox(ResourceOrderCreateDto createDto, StockDeductRecordEntity record, MqOutboxEntity outbox);
 }

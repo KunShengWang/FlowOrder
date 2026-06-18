@@ -3,8 +3,10 @@ package com.javaup.resource.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.javaup.dto.ResourceOrderCreateDto;
 import com.javaup.exception.BizException;
+import com.javaup.resource.entity.MqOutboxEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.entity.StockItemEntity;
+import com.javaup.resource.mapper.MqOutboxMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.service.StockDeductService;
@@ -20,6 +22,9 @@ public class StockDeductServiceImpl implements StockDeductService {
 
     @Resource
     private StockDeductRecordMapper deductRecordMapper;
+
+    @Resource
+    private MqOutboxMapper mqOutboxMapper;
 
     /**
      * 库存预扣
@@ -95,6 +100,19 @@ public class StockDeductServiceImpl implements StockDeductService {
         );
         if (stockRows != 1) {
             throw new BizException("释放MySQL库存失败");
+        }
+    }
+
+    /**
+     * 库存预扣并保存mq消息
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void preDeductAndSaxveOutbox(ResourceOrderCreateDto createDto, StockDeductRecordEntity record, MqOutboxEntity outbox) {
+        preDeduct(createDto,record);
+        int rows = mqOutboxMapper.insert(outbox);
+        if(rows != 1){
+            throw new BizException("订单创建消息保存失败");
         }
     }
 }

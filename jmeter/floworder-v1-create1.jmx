@@ -23,9 +23,9 @@
       <hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST /reservation/create/v1">
           <stringProp name="HTTPSampler.domain">${__P(host,127.0.0.1)}</stringProp>
-          <stringProp name="HTTPSampler.port">${__P(port,8081)}</stringProp>
+          <stringProp name="HTTPSampler.port">${__P(port,8088)}</stringProp>
           <stringProp name="HTTPSampler.protocol">http</stringProp>
-          <stringProp name="HTTPSampler.path">/reservation/create/v1</stringProp>
+          <stringProp name="HTTPSampler.path">/api/reservation/create/v3</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
