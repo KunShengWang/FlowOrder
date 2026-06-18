@@ -79,13 +79,13 @@ public class ResourceRabbitListenerConfig {
             int maxConcurrentConsumers,
             int prefetch) {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
-        factory.setConnectionFactory(connectionFactory);
-        factory.setTaskExecutor(executor);
-        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
-        factory.setDefaultRequeueRejected(false);
-        factory.setConcurrentConsumers(concurrentConsumers);
-        factory.setMaxConcurrentConsumers(maxConcurrentConsumers);
-        factory.setPrefetchCount(prefetch);
+        factory.setConnectionFactory(connectionFactory);// RabbitMQ 连接
+        factory.setTaskExecutor(executor);// 线程池
+        factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);// 手动确认
+        factory.setDefaultRequeueRejected(false);// 拒绝后不放回队列
+        factory.setConcurrentConsumers(concurrentConsumers);// 并发消费者数
+        factory.setMaxConcurrentConsumers(maxConcurrentConsumers);// 最大消费者数
+        factory.setPrefetchCount(prefetch);// 每次预取消息数
         return factory;
     }
 }

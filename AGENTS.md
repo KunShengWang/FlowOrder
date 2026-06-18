@@ -1,530 +1,449 @@
-# FlowOrder 项目协作指南
+# FlowOrder 项目协作与学习指南
 
-## 1. 文档作用范围
+## 1. 文档作用与事实来源
 
-本文件适用于整个 `floworder` 仓库。
+本文件适用于整个 `floworder` 仓库。任何进入本项目的编码 Agent，在分析、设计、修改或评审代码前，都必须先阅读本文件。
 
-任何进入本项目的编码 Agent，在分析问题、提出方案或修改代码前，都应先阅读本文件。判断项目状态时，以当前代码、数据库脚本和实际测试结果为准，不能把聊天中讨论过的方案当作已经实现。
+判断项目状态时，事实优先级如下：
 
-最后一次与仓库同步日期：2026-06-11。
+1. 当前分支和工作区代码。
+2. `sql/floworder.sql`、配置文件和 Maven 依赖。
+3. 自动化测试、JMeter、日志、Actuator 和中间件控制台的实际结果。
+4. README、设计文档和聊天记录。
 
-## 2. 长期目标
+讨论过的方案不等于已经实现，代码已经合并也不等于故障路径已经验证。
 
-用户正在准备杭州中大厂的 Java 后端与 AI Agent 工程方向实习。最终简历计划保留两个互相关联的主项目：
+当前文档快照：2026-06-18。此时 `main` 已合并 V3、V4、V5、V6 代码。工作区可能有用户尚未提交的修改，开始任务前必须执行 `git status --short`，不得覆盖或回滚无关改动。
 
-1. `FlowOrder`：高并发预约、订单、库存和任务履约平台。
-2. `AgentDesk`：企业知识库与智能工单 Agent 平台。
+## 2. 项目目标
 
-后续 `AgentDesk` 将通过 Tool Calling 或 MCP 调用 FlowOrder 的业务接口，例如：
+### 2.1 目标岗位与项目边界
 
-- 查询订单。
-- 查询可用库存。
-- 创建工单。
-- 经人工确认后取消预约。
+`岗位信息.txt` 中与 Java 后端方向重复度最高的要求，不是“会写 Spring Boot 接口”，而是：
 
-因此，FlowOrder 不能只是孤立的高并发演示项目，还需要逐步提供结构清晰、支持幂等、具备权限边界的业务 API。
+- 扎实的 Java、数据结构与算法、操作系统、计算机网络基础。
+- 大型分布式系统中的高并发、高性能、高可用和可扩展性设计。
+- 对 Spring、MySQL、Redis、MQ 等框架和中间件不只会使用，还能解释原理、边界和优化方法。
+- 能完成方案设计、编码、单元测试、性能优化、上线验证和线上问题排查的完整研发流程。
+- 能独立拆解问题、比较方案、定位风险，并用数据验证效果。
 
-## 3. 协作规则
+FlowOrder 的定位是：
 
-用户希望通过亲自编写代码学习，而不是让 Agent 直接搬运或代写整个项目。
+> 以预约、订单和库存为业务载体，构建一套可验证的分布式交易链路，用工程证据证明 Java 后端候选人在并发正确性、最终一致性、消息可靠性、服务治理、性能分析和故障排查方面的能力。
 
-- 默认采用“指导用户实现”的方式：说明看哪些代码、为什么这样设计、具体如何实现、如何验证。
-- 只有用户明确要求 Agent 修改或实现时，才能直接编辑项目代码。
-- 给出的代码必须匹配仓库当前真实的包名、实体类、状态值、接口和框架版本。
-- 回答实现问题前，先检查当前代码，不能依赖过期的聊天上下文猜测。
-- 必须明确区分：
-  - 当前已经存在的代码；
-  - 当前仍然存在的缺陷；
-  - 尚未实现的设计方案；
-  - 后续版本的优化目标。
-- 不复制完整参考项目。一次只吸收一个值得学习的工程思想，并根据 FlowOrder 的业务进行简化。
-- 不为了堆技术栈增加复杂度。每个组件都必须解决明确的并发、一致性、可靠性或可观测性问题。
-- 当前工作区可能存在用户尚未提交的修改，不得回滚与当前任务无关的变更。
+FlowOrder 主要服务于 Java 后端和 AI 应用后端岗位中的“高可靠业务系统”部分。它不负责覆盖全部 Agent、RAG、Memory、MCP 和 Multi-Agent 能力；这些能力由后续 AgentDesk 项目承担。两个项目应形成互补，而不是把所有 JD 关键词塞进同一个仓库。
 
-## 4. 项目定位
+### 2.2 FlowOrder 必须证明的核心能力
 
-FlowOrder 不是大型 CRUD 项目。项目的主要价值是围绕一个小而完整的业务场景，建立可解释、可验证的工程链路：
+#### A. 并发正确性，而不只是并发访问
 
-```text
-请求校验
-  -> Redis 库存预扣
-  -> MySQL 库存预扣
-  -> 远程幂等创建订单
-  -> 确认预扣或执行补偿
-  -> 超时关闭订单
-  -> 释放库存或完成履约
-  -> 输出可追踪的日志和指标
-```
+- 解释 V1 分布式大锁为什么正确但吞吐较低。
+- 解释 V2 为什么把并发控制下沉到 Redis Lua、MySQL 条件更新和唯一索引。
+- 在单实例和多实例下证明无超卖、无负库存、相同 `requestId` 只产生一个业务结果。
+- 能说明 JVM 本地锁、分布式锁、CAS、数据库锁分别适合解决什么问题，以及为什么当前主链路不依赖进程内锁保证分布式正确性。
+- 线程池必须有容量、拒绝策略、隔离边界和关闭策略，不能只会调用 `@Async`。
 
-项目需要重点体现以下面试能力：
+#### B. 分布式一致性，而不只是调用中间件
 
-- Java 并发和锁粒度设计。
-- Redis 原子库存扣减和缓存一致性。
-- MySQL 条件更新、事务、索引和锁。
-- 请求幂等与消息幂等。
-- 远程调用结果不确定性和最终一致性。
-- RabbitMQ 可靠投递、延迟处理、重试与死信队列。
-- Sentinel 限流、熔断与降级。
-- JMeter 性能对比和瓶颈分析。
-- TraceId、监控指标和线上问题排查。
+- 区分明确业务失败、传输失败和提交结果未知，禁止把未知结果当成失败释放库存。
+- 掌握本地事务边界、事务传播和事务失效场景，避免在数据库事务内执行远程调用。
+- 使用 Outbox、幂等消费、条件状态转换和补偿实现最终一致性，并能说明为什么没有直接引入 Seata。
+- 面对重复、乱序、延迟、消息丢失、ACK 丢失和服务崩溃时，状态仍能收敛到明确终点。
+- 所有自动处理都必须有边界；无法自动确认的结果进入 `MANUAL_REVIEW`，不能永久静默卡在处理中。
 
-## 5. 当前技术栈事实
+#### C. 高性能与可扩展性，而不只是“使用 Redis”
 
-必须以根目录 `pom.xml` 中的真实配置为准，不能直接沿用早期规划：
+- 使用相同环境和数据对比 V1、V2、V3，记录 Throughput、P95、P99、错误率和资源使用情况。
+- 能通过线程池、数据库连接池、Redis、RabbitMQ 积压、锁等待和远程调用耗时定位瓶颈。
+- 使用 Explain、索引设计和慢 SQL 证据说明数据库访问是否合理。
+- 证明服务可以无状态多实例部署；定时任务和 Outbox 扫描依靠数据库抢占与租约协调，而不是依赖单机假设。
+- 优化必须由测量驱动。例如 Outbox Confirm 是否异步化，要先证明同步等待造成积压，再设计有界并发，而不是凭感觉改成异步。
 
-- Java：17。
-- Spring Boot：3.5.14。
-- Spring Cloud：2025.0.0。
-- Spring Cloud Alibaba：2023.0.3.3。
-- Redisson：3.32.0。
-- MyBatis Plus：3.5.15。
-- MySQL 数据库：`floworder`。
-- Redis database：1。
-- Nacos：`127.0.0.1:8848`。
+#### D. 高可用与稳定性，而不只是“服务能启动”
+
+- 对 Redis、RabbitMQ、MySQL、Nacos 和 order-service 的不可用、超时和恢复过程进行故障实验。
+- 使用限流、熔断、降级、超时、有限重试、隔离和优雅停机控制故障扩散。
+- 区分“快速失败”“业务失败”“结果未知”和“需要人工恢复”四种语义。
+- 对 Outbox `DEAD`、RabbitMQ DLQ、库存补偿和人工重放建立可操作闭环。
+- 设计时承认单点和开发环境限制，不在没有部署证据时宣称真正的生产级高可用。
+
+#### E. 可观测性与故障排查，而不只是打印日志
+
+- `traceId`、`requestId`、`messageId`、`orderNo`、`deductNo` 能贯穿请求、Feign、MQ、定时任务和数据库状态。
+- Actuator 指标、结构化日志、RabbitMQ 控制台、SQL 和 Redis 状态可以相互印证。
+- 能完成 CPU 飙高、线程阻塞、死锁、OOM、消息堆积、慢 SQL 和连接池耗尽等场景的排查演练。
+- 保留线程 dump、堆 dump、GC/系统指标、关键日志、根因和修复前后对比，而不是只背诵排查命令。
+
+#### F. 工程交付能力，而不只是个人 Demo
+
+- 重要改动先有问题定义、约束、方案对比、状态图或时序图，再进入编码。
+- 核心状态机、幂等、补偿和消息可靠性必须有针对性自动化测试。
+- 使用 Git 分支、清晰提交、PR、自审和代码审查记录保留演进过程。
+- 接口、错误码、数据库迁移、配置和恢复操作需要文档化。
+- 每个版本能够从“为什么做、怎么设计、有哪些失败方式、如何验证、结果如何”五个方面完整复盘。
+
+### 2.3 JD 能力到项目证据的映射
+
+| JD 能力 | FlowOrder 承载点 | 必须保留的证据 |
+| --- | --- | --- |
+| Java 并发与锁 | V1/V2 锁范围、线程池隔离、任务抢占 | 并发测试、线程 dump、锁等待和吞吐对比 |
+| Spring 与事务 | 本地事务、Feign 边界、消费事务、优雅停机 | 事务回滚测试、事务失效说明、停机日志 |
+| MySQL | 条件库存更新、唯一索引、状态机、任务扫描 | 表结构、Explain、并发更新和死锁分析 |
+| Redis | Lua 扣减、缓存重建、补偿与失效 | Lua 原子性测试、Redis/MySQL 一致性核对 |
+| RabbitMQ | Outbox、Confirm/Return、ACK、DLQ、重放 | 故障注入、消息表状态、重复/乱序测试 |
+| 分布式系统 | 幂等、最终一致性、状态机、限流熔断 | 状态收敛记录、异常矩阵、人工恢复流程 |
+| 性能与高可用 | JMeter、Sentinel、线程池、优雅停机 | P95/P99、错误率、积压量、恢复时间 |
+| JVM/Linux/网络排查 | Actuator、日志、线程/堆 dump、超时实验 | 排查报告、命令输出、根因和修复对比 |
+| 工程能力 | 设计文档、测试、Git/PR、复盘 | 可审查提交、测试报告、版本决策记录 |
+
+### 2.4 项目不能替代的并行基础学习
+
+FlowOrder 能提供真实场景，但不能代替系统学习。以下内容需要独立学习、做小实验并形成面试答案：
+
+- 数据结构与算法：复杂度、哈希、树、堆、图、常见算法题。
+- Java 基础：集合源码、IO/NIO、反射、泛型、异常和序列化。
+- Java 并发原理：JMM、volatile、CAS、AQS、synchronized、ReentrantLock、并发容器、CompletableFuture。
+- JVM：内存结构、对象创建、类加载、GC Roots、垃圾回收器和 JVM 参数。
+- Spring/MyBatis 原理：Bean 生命周期、循环依赖、AOP、事务传播、MVC 流程、自动装配和 SQL 执行流程。
+- MySQL/Redis/MQ 原理：B+ 树、MVCC、锁、缓存问题、Redis 数据结构、RabbitMQ/Kafka 模型差异。
+- 计算机网络与 Linux：TCP/IP、HTTP、连接池、超时、进程线程、CPU、内存、磁盘和端口排查。
+
+不要为了展示 AQS、CAS、Kafka、Kubernetes 等知识，强行把它们塞进 FlowOrder 主链路。能在独立实验中讲清原理和取舍，比在项目里留下不必要代码更符合 JD 要求。
+
+### 2.5 项目进度评价标准
+
+评价 FlowOrder 时，不看接口数量和技术名词数量，而看：
+
+- 问题是否来自真实并发、一致性、可靠性或性能约束。
+- 方案是否比较过替代设计并说明取舍。
+- 正确性是否由不变量、条件更新和测试证明。
+- 性能结论是否有同环境、可重复的数据。
+- 故障是否能够主动构造、定位并恢复。
+- 结果是否能形成设计文档、实验记录和面试表达。
+
+在 DLQ/人工恢复和 V6 故障排查闭环完成前，不扩展 AgentDesk 集成，也不新增与当前问题无关的平台型组件。
+
+## 3. 协作方式
+
+用户以亲自编写代码为主要学习方式。
+
+- 默认采用“Agent 讲思路、指出位置、用户编写、Agent 复查”的方式。
+- 只有用户明确要求直接实现或修复时，Agent 才编辑业务代码。
+- 回答代码问题前先读取当前实现，不依赖旧上下文猜测。
+- 一次审查应尽可能完整列出同一范围内的问题，不要每轮只暴露一个容易同时发现的问题。
+- 必须区分“已实现”“已验证”“仍有缺口”“未来可选优化”。
+- 不直接复制 `damai_pro`。只提取可解释的工程思想，再根据 FlowOrder 的单库存项业务简化。
+- 不为了简历堆技术栈。新增组件必须对应明确问题和验证方案。
+- 不修改、移动或删除与当前任务无关的用户改动。
+- Git 切换分支前保护工作区。不要用强制签出丢弃改动；不要把练习分支的未提交代码通过 Smart Checkout 意外带到 `main`。
+
+## 4. 当前技术栈
+
+以根目录 `pom.xml` 和各服务配置为准：
+
+- Java 17。
+- Spring Boot 3.5.14。
+- Spring Cloud 2025.0.0。
+- Spring Cloud Alibaba 2025.0.0.0。
+- MyBatis Plus 3.5.15。
+- Redisson 3.32.0。
+- MySQL、Redis、RabbitMQ、Nacos。
+- OpenFeign、Gateway、Sentinel、Actuator。
+- Maven 多模块工程。
+
+默认端口：
+
+- gateway-service：8088。
 - resource-service：8081。
 - order-service：8082。
+- Nacos：8848。
+- RabbitMQ：5672。
 
-RabbitMQ、Sentinel、Gateway、可观测性和部署相关内容属于后续路线。除非当前代码能够证明某项已经完成，否则不能在文档或简历中描述为已实现。
+主要模块：
 
-## 6. 仓库结构
+- `floworder-common`：公共响应、异常和枚举。
+- `floworder-server-client`：Feign 契约、共享 DTO 和 MQ 协议。
+- `floworder-resource-service`：预约入口、校验、Redis/MySQL 库存、预扣记录、MQ 结果和状态消费。
+- `floworder-order-service`：订单创建、查询、状态机、状态日志和订单侧 Outbox。
+- `floworder-gateway-service`：统一入口和网关限流。
+- `floworder-service-initialize`：组合校验基础设施。
+- `floworder-redisson-framework`：Redisson 公共配置。
+- `sql`：表结构与测试数据。
+- `jmeter`：并发和性能实验。
 
-主要模块如下：
+## 5. 版本路线与当前定位
 
-- `floworder-common`
-  - 通用响应、异常、枚举和公共工具。
-- `floworder-server-client/floworder-order-client`
-  - order-service 的 Feign 接口和 DTO。
-- `floworder-server-client/floworder-resource-client`
-  - resource-service 对外共享的客户端接口和 DTO。
-- `floworder-server/floworder-resource-service`
-  - 预约入口、组合校验链、Redis 库存、MySQL 预扣、结果补偿和版本策略。
-- `floworder-server/floworder-order-service`
-  - 幂等创建订单和订单查询。
-- `floworder-server/floworder-gateway-service`
-  - Gateway 模块。不能默认 README 中规划的所有网关能力都已完成。
-- `floworder-spring-cloud-framework/floworder-service-initialize`
-  - 组合校验树基础设施。
-- `floworder-redisson-framework`
-  - Redisson 公共配置。
-- `sql/floworder.sql`
-  - 当前数据库结构。
-- `jmeter`
-  - 版本对比和并发正确性测试计划。
+### V1：历史对照版本
 
-## 7. 参考项目
+- 接口：`POST /reservation/create/v1`。
+- 使用 Redisson 分布式大锁覆盖库存和同步远程调用。
+- 用于学习锁范围、看门狗、锁等待以及远程调用持锁的吞吐代价。
+- V1 仅作为历史学习样本，不再作为当前正确性基线，也不继续投入收口工作。
 
-本仓库之外的参考项目包括：
+### V2：同步正确性基线
 
-- `D:\JDK\IDEA\java_reinforcement_learning\damai_pro`
-- `D:\JDK\IDEA\java_reinforcement_learning\dock-data-center`
-- `D:\JDK\IDEA\java_reinforcement_learning\link-flow`
-- GitHub 项目 `java-up-up/super-agent`
+- 接口：`POST /reservation/create/v2`。
+- Redis Lua 原子检查并扣减库存。
+- MySQL 使用条件更新完成 `available_stock -> locked_stock`。
+- 同步 Feign 创建订单。
+- 明确区分业务失败和远程结果未知。
+- 通过查询订单、有限重试和条件状态更新完成确认或补偿。
+- V2 是无超卖、无负库存、`requestId` 并发幂等和未知结果处理的最低正确性基线。
 
-当前 FlowOrder 阶段主要从 `damai_pro` 学习：
+### V2.1：可选实验
 
-- 组合校验树。
-- 多版本订单策略。
-- 不同版本之间的锁设计演进。
-- 延迟取消订单。
-- 消息消费幂等思想。
+- 只允许作为 `ReentrantLock` 单实例/多实例对比实验。
+- 没有测量收益时，不把 JVM 本地锁加入主链路。
 
-不应直接迁移：
+### V3：RabbitMQ 异步下单
 
-- 大麦特有的节目、票档、座位和营销字段。
-- FlowOrder 只有单个 `stockItemId` 时没有必要使用的多票档加锁逻辑。
-- 不能解决当前实际问题的复杂框架封装。
+- 接口仍为 `POST /reservation/create/v3`。
+- 资源服务在同一 MySQL 事务中写库存预扣记录和订单创建 Outbox。
+- Outbox 任务发送 RabbitMQ 订单创建命令。
+- 订单服务幂等消费，在同一事务中创建订单、写消费日志和订单结果 Outbox。
+- 资源服务消费订单结果，确认订单创建或释放锁定库存。
+- 包含持久化消息、Publisher Confirm/Return、手动 ACK、消费幂等、有限重试、DLQ 和发送租约。
 
-## 8. 领域模型与不变量
+### V4：订单状态机和超时闭环
 
-当前核心表：
+- V4 不新增 `/create/v4`；购买入口继续使用 V3。
+- 订单状态：创建、确认、取消、超时。
+- 有效状态转换写入 `fo_order_status_log`。
+- 订单状态消息驱动资源侧库存最终结算。
+- 数据库订单状态是事实来源；定时任务或延迟消息只是触发器。
 
-- `fo_resource`
-- `fo_stock_item`
-- `fo_reservation_order`
-- `fo_stock_deduct_record`
-- `fo_mq_message_log`
-- `fo_order_status_log`
+### V5：稳定性与服务治理
 
-库存必须始终满足：
+- Gateway 路由与限流。
+- Sentinel 远程依赖熔断。
+- HTTP、MQ 消费者和定时任务线程池隔离。
+- Spring Boot、Tomcat、RabbitMQ 消费线程和数据源优雅停机验证。
+
+### V6：代码级可观测性
+
+- `traceId`/`requestId` 已贯穿 HTTP、Feign、订单创建消息、订单结果消息和状态消息。
+- MQ 消费线程使用 MDC 并在 `finally` 中清理。
+- 日志格式和基础 Actuator 端点已经接入。
+- V6 尚未完成全部实验和文档，不能表述为完整可观测平台。
+
+## 6. 核心领域边界
+
+resource-service 拥有：
+
+- 资源和库存项校验。
+- Redis 库存缓存。
+- `fo_stock_item`。
+- `fo_stock_deduct_record`。
+- 订单结果和订单状态消息对应的库存处理。
+
+order-service 拥有：
+
+- `fo_reservation_order`。
+- 订单创建、确认、取消和超时状态机。
+- `fo_order_status_log`。
+- 订单状态事件生产。
+
+即使开发环境共用一个 MySQL，也不能跨服务随意修改对方领域表。
+
+## 7. 状态、不变量与幂等
+
+库存始终满足：
 
 ```text
 total_stock = available_stock + locked_stock + sold_stock
 ```
 
-任何库存字段都不能小于零。
+任何库存字段不得为负。
 
-预约订单状态：
+订单状态：
 
-- `0`：初始化。
-- `10`：已预约。
-- `20`：已确认。
-- `30`：已取消。
-- `40`：已超时。
-- `50`：失败。
+- `0 INIT`：初始化。
+- `10 RESERVED`：已预约。
+- `20 CONFIRMED`：已确认。
+- `30 CANCELLED`：已取消。
+- `40 TIMEOUT`：已超时。
+- `50 FAILED`：创建失败。
 
-库存预扣记录状态：
+库存预扣状态：
 
-- `10`：已预扣。
-- `20`：已确认。
-- `30`：已正常释放。
-- `40`：失败。
+- `10 PRE_DEDUCTED`：已预扣，库存位于 `locked_stock`。
+- `20 ORDER_CREATED`：订单已创建，库存仍锁定。
+- `30 RELEASED`：库存已释放回 `available_stock`。
+- `40 FAILED`：处理失败。
+- `50 MANUAL_REVIEW`：结果不确定，等待人工处理，库存仍锁定。
+- `60 SOLD`：库存已转入 `sold_stock`。
 
-后续应逐步将状态数字收敛为有明确含义的枚举或常量。新代码不能继续散落没有解释的状态数字。
+Outbox 状态：
 
-请求幂等约束：
+- `0 NEW`。
+- `10 SENDING`。
+- `20 SENT`。
+- `30 RETRY`。
+- `40 DEAD`。
 
-- `requestId` 表示一次逻辑预约请求。
-- 相同 `requestId` 不能对应不同的用户、资源、库存项或数量。
-- 数据库唯一索引是并发下的最终防线，但不能代替应用层清晰的幂等处理。
+幂等要求：
 
-## 9. 组合校验链
+- 相同 `requestId` 必须对应同一用户、资源、库存项、数量和订单参数。
+- 数据库唯一索引是最终防线，应用层仍需校验重复请求参数一致性。
+- MQ 使用 `messageId + consumerGroup` 唯一约束。
+- 状态转换必须带原状态条件，例如 `WHERE status = PRE_DEDUCTED`。
+- ACK 丢失、Confirm 结果未知和重复投递都可能产生重复消息，消费者必须允许安全重放。
 
-组合校验树是 FlowOrder 有意保留的学习点。
+## 8. 两类 MQ 消费者的职责
 
-当前校验职责包括：
-
-- 请求参数校验。
-- 资源是否存在、是否启用。
-- 库存项是否存在、是否属于当前资源、是否启用。
-
-业务校验与库存扣减必须分离。校验节点不能偷偷修改库存或创建订单。
-
-校验树应保持在面试中能够清楚解释的复杂度，不需要复刻 `damai_pro` 的完整校验体系。
-
-## 10. V1 当前设计
-
-接口：
+`OrderResultConsumer` 处理“订单是否创建成功”：
 
 ```text
-POST /reservation/create/v1
+创建成功：PRE_DEDUCTED -> ORDER_CREATED
+创建失败：PRE_DEDUCTED -> RELEASED
 ```
 
-当前 V1 主流程：
+创建成功时只确认订单存在，不扣减 `locked_stock`。代码中的 `confirm` 更接近 `markOrderCreated` 语义。
 
-1. 根据 `stockItemId` 获取 Redisson 分布式锁。
-2. 根据 `requestId` 查询已有库存预扣记录。
-3. 生成 `orderNo` 和 `deductNo`。
-4. Redis 不存在库存时，从 MySQL 初始化缓存。
-5. 扣减 Redis 库存。
-6. 在一个 MySQL 事务中插入 `PRE_DEDUCTED` 记录，并将库存从 `available_stock` 转移到 `locked_stock`。
-7. 通过 Feign 调用 order-service 创建订单。
-8. 订单创建成功后确认库存预扣记录。
-9. 远程调用结果不确定时，通过查询 order-service 进行结果确认。
-10. 定时扫描过期的 `PRE_DEDUCTED` 记录进行补偿。
-
-V1 故意使用较大范围的分布式锁作为正确性基线。当前锁覆盖 Redis、MySQL 和远程 Feign 调用，因此同一个 `stockItemId` 的请求会串行执行，吞吐量受到明显限制。
-
-## 11. V1 必须收口的工作
-
-以下事项全部实现并通过测试之前，不能将 V1 描述为已经完成。
-
-### 11.1 修正正常释放状态
-
-截至 2026-06-11，`StockDeductServiceImpl.release()` 仍然把正常释放的预扣记录修改成状态 `40`。
-
-正确语义应该是：
+`OrderStateConsumer` 处理订单创建后的生命周期：
 
 ```text
-正常成功释放 -> 30
-无法正常处理的最终失败 -> 40
+确认订单：ORDER_CREATED -> SOLD
+取消/超时：ORDER_CREATED -> RELEASED
 ```
 
-`ResourceOrderServiceImpl.handleOldDeductRecord()` 也必须明确处理状态 `30`。
+状态消息可能早于订单创建结果到达，因此状态消费者允许从 `PRE_DEDUCTED` 直接转为 `SOLD` 或 `RELEASED`。迟到的创建成功结果不得覆盖 `RELEASED` 或 `SOLD` 终态。
 
-### 11.2 正确表达远程调用结果未知
+`fo_order_status_log` 由 order-service 写入。resource-service 的状态消费者不负责写订单状态日志。
 
-当前 `OrderClientFallback.create()` 仍然返回普通错误响应。这会导致 resource-service 把 order-service 不可用错误地判断为“明确创建失败”。
+## 9. RabbitMQ 与 Outbox 可靠性规则
 
-必须区分：
+- 业务数据和 Outbox 必须在同一个本地事务中提交。
+- 只有 Broker ACK 且消息可路由时，Outbox 才能从 `SENDING` 转为 `SENT`。
+- 发布失败进入退避重试，超过次数进入 `DEAD`。
+- 发送任务必须先条件抢占记录，并使用 `claimUntil` 回收崩溃实例留下的租约。
+- 消费业务、消费日志和结果 Outbox 必须在同一个本地事务中提交。
+- 业务失败可以生成明确失败结果；技术异常不能伪装成业务失败。
+- 消费者有限重试后进入 DLQ，不允许无限阻塞消费线程。
+- Redis 缓存清理失败时不能直接 ACK；应依靠消息重投继续删除缓存。
 
-- order-service 可以访问，并明确返回业务拒绝：属于明确失败，可以释放库存。
-- 超时、连接断开、fallback 或返回空响应：属于结果未知，保持 `PRE_DEDUCTED` 并进入结果确认。
+当前发布器在后台线程中同步等待最多 5 秒的 Publisher Confirm。这不会阻塞用户请求，是简单可靠的基线。若要异步化，优先采用有界发布线程池；真正的异步 Confirm 回调还必须具备：专用有界执行器、最大在途数量、超时、租约协调、拒绝处理和优雅停机。不能只删除 `getFuture().get()` 或直接添加无界 `@Async`。
 
-### 11.3 增加有边界的补偿重试
+## 10. 当前明确缺口
 
-当前库存预扣表还没有补偿所需的重试字段。
+以下内容尚未形成完整闭环，不能在简历中包装为已完成：
 
-现有 SQL 中的：
+1. RabbitMQ 消费死信闭环不完整。订单创建、订单结果和订单状态都有 DLQ，但没有完整的 DLQ 查询、告警、自动转人工审核和处理记录。
+2. resource-service 和 order-service 已有 Outbox `DEAD` 重试及 `SENT` 重放管理接口，但仍需要把 DLQ 消息发现、人工重放、结果确认和死信清理串成可操作流程。
+3. 异步预扣发生技术异常时不能直接释放库存，因为订单提交结果可能未知。无法确认时应保持锁定并转 `MANUAL_REVIEW`。
+4. 对数据库事务的通用异常进行 Redis 补偿时，要区分“确定回滚”和“提交结果未知”。结果未知时优先删除 Redis key，从 MySQL 重建，避免盲目增加库存。
+5. V6 仍需完成 Actuator 实验记录、压力下线程 dump 分析和 `docs/v6-observability-troubleshooting.md`。
+6. Outbox 同步等待 Confirm 是否需要并发化，必须先用积压量、发送吞吐、确认延迟和故障恢复时间证明瓶颈。
+
+管理端 Outbox 接口只有在 `floworder.admin.enabled=true` 时存在：
 
 ```text
-retry_count
-next_retry_time
-last_error
+GET  /internal/mq/outbox/dead
+POST /internal/mq/outbox/dead/{messageId}/retry
+POST /internal/mq/outbox/sent/{messageId}/replay
 ```
 
-属于 `fo_mq_message_log`，不是 `fo_stock_deduct_record`。不能误认为预扣补偿已经具备这些字段。
+这些接口属于本地学习和运维恢复能力，正式暴露前必须增加认证、授权、审计和防误操作约束。
 
-实现补偿重试时，应给库存预扣记录增加：
+## 11. 已验证实验与简历证据
 
-```text
-retry_count
-next_retry_time
-last_error
+V5 已验证：
+
+- Gateway 对 `/api/reservation/create/v3` 的连续请求返回 HTTP 429，证明网关限流生效。
+- Feign 熔断规则实际资源名为 `floworder-order-service`，不是手写的方法签名。使用 Sentinel `getRules` 和 `cnode` 观察到 blocked 数增长和快速失败。
+- order-service 不可用且结果未知时，resource-service 保持“结果确认中，请勿重复提交”语义，不立即释放库存。
+- IntelliJ Stop 下观察到 Tomcat 等待活动请求、RabbitMQ 等待消费线程、Hikari 正常关闭，证明核心优雅停机路径生效。
+- 停机阶段出现过 Nacos `NacosGracefulShutdownDelegate` 空指针，应单独记录为客户端兼容或关闭顺序问题，不能据此否定 Tomcat、RabbitMQ 和数据源的优雅停机结果。
+
+V6 已观察到 HTTP 请求和 MQ 创建/结果链路中的 `traceId`、`requestId` 传播。后续还需要把证据整理为故障排查文档。
+
+简历描述必须包含：工程问题、设计、关键取舍、测试方法和结果。不要只写“使用 Redis/RabbitMQ/Sentinel”。
+
+## 12. 测试原则
+
+正确性测试至少覆盖：
+
+- 单请求成功。
+- 相同 `requestId` 顺序和并发重复。
+- 相同 `requestId` 携带不同参数。
+- 库存不足和 `quantity > 1`。
+- 多实例并发下无超卖、无负库存。
+- Redis key 缺失、Redis 补偿失败和缓存删除失败。
+- MySQL 条件更新失败和事务回滚。
+- Feign 业务失败、连接失败、超时、空响应和结果未知。
+- RabbitMQ NACK、Return、Confirm 超时、重复投递、消费异常、DLQ 和 Outbox 租约回收。
+- 订单确认、取消、超时以及消息乱序。
+- 服务停止时正在执行 HTTP、MQ 和定时任务。
+
+每次库存测试后都校验 MySQL、Redis 和消息表，不能只看 HTTP 200。
+
+性能实验记录：Throughput、Average、P90/P95/P99、Max、HTTP 错误率、业务错误率、库存不变量和消息积压。正式压测关闭 JMeter `View Results Tree`。
+
+已有针对订单状态机并发和 MQ 状态消费的测试，但新增或修改状态、补偿、幂等、DLQ、Outbox 逻辑时仍需增加对应测试，不能用上下文启动测试代替业务断言。
+
+## 13. 构建、启动与排查
+
+常用构建命令：
+
+```powershell
+mvn -pl floworder-server/floworder-resource-service,floworder-server/floworder-order-service -am clean compile
+mvn -pl floworder-server/floworder-resource-service,floworder-server/floworder-order-service -am test
 ```
 
-并建立以以下字段开头的索引：
-
-```text
-(status, next_retry_time)
-```
-
-V1 建议采用以下学习用退避策略：
-
-```text
-第一次确认：5 秒
-第二次确认：10 秒
-第三次确认：30 秒
-```
-
-处理规则：
-
-- 查询到订单：确认状态 `10 -> 20`。
-- order-service 不可用：保持状态 `10`，推迟到下一次确认。
-- 第一次查询不到订单：不能立即释放库存。
-- 多次查询都不存在，并且已经超过最终确认窗口：释放库存，状态 `10 -> 30`。
-
-状态修改必须带原状态条件，确保多个任务实例并发处理时只有一个实例能够成功转换状态。
-
-### 11.4 分离两种超时时间
-
-以下两个时间不能继续混用：
-
-- 结果确认时间：远程调用结果未知后，何时开始查询，初始可以是 5 秒。
-- 订单过期时间：订单创建成功但用户长时间没有确认时，何时关闭，目前计划为 15 分钟。
-
-库存预扣补偿定时任务不等于订单超时关闭任务。
-
-### 11.5 完善诊断日志
-
-捕获远程调用异常时，日志必须输出异常对象。否则连接拒绝、超时、404、fallback 和反序列化错误最终都会显示成同一句固定提示。
-
-正式实现中，不要每 5 秒用 INFO 打印一次“扫描到 0 条记录”。空扫描应使用 DEBUG，或者只输出有意义的聚合指标。
-
-## 12. 补偿语义
-
-补偿不等于重新创建缺失订单。
-
-V1 的结果确认任务主要采用反向补偿：
-
-```text
-订单存在
-  -> 确认库存预扣
-
-结果仍然未知
-  -> 保持 PRE_DEDUCTED 并继续重试
-
-多次确认后确定订单不存在
-  -> 释放 MySQL 锁定库存
-  -> 恢复或删除 Redis 库存缓存
-  -> 将预扣记录改为 RELEASED
-```
-
-除非业务明确要求正向重试，否则不能在后台自动重新创建订单。客户端可能已经收到失败结果并放弃本次操作，后台晚些时候重新下单会改变用户预期。
-
-Redis 库存恢复顺序：
-
-1. 在本地事务中释放 MySQL 库存。
-2. MySQL 成功后恢复 Redis。
-3. 如果 MySQL 已成功而 Redis 恢复失败，删除 Redis 库存 key，让后续请求从 MySQL 重建。
-
-补偿异常不能覆盖原始业务异常。应将补偿异常作为 suppressed exception 附加到原异常，并记录完整上下文。
-
-## 13. V1 测试门槛
-
-进入 V2 前，必须保留一份可对比的 V1 基线报告。
-
-JMeter 必测场景：
-
-1. 单个成功请求。
-2. 相同 `requestId` 顺序重复请求。
-3. 相同 `requestId` 并发请求。
-4. 库存充足、每次使用唯一 `requestId`。
-5. 库存 100、并发发送 1000 个唯一请求。
-6. `quantity > 1` 的批量预约。
-7. 流量分布到两个不同的 `stockItemId`。
-8. 逐渐增加并发，观察锁竞争。
-9. 请求前关闭 order-service。
-10. order-service 已创建订单，但响应或结果确认失败。
-11. 补偿任务查询到订单存在。
-12. 补偿任务经过多次确认后确定订单不存在。
-13. 持续 10 分钟的稳定性测试。
-
-每次测试后都要核对数据库和 Redis，不能只看 HTTP 返回值。
-
-必须满足：
-
-```text
-成功订单数 <= 初始可用库存
-同一个 requestId 只能有一个订单
-同一个 requestId 只能有一条预扣记录
-库存不能为负
-Redis 库存与预期的 MySQL available_stock 一致
-total_stock = available_stock + locked_stock + sold_stock
-```
-
-需要记录：
-
-- Throughput。
-- Average。
-- P90、P95、P99。
-- Max。
-- HTTP 错误率和业务错误率。
-- 获取锁超时数量。
-- 库存不足数量。
-
-正式压测时关闭 `View Results Tree`，避免 JMeter GUI 监听器影响测试结果。
-
-## 14. V2 目标
-
-V2 是锁粒度和性能演进，不是重新开发一套无关业务。
-
-新增接口：
-
-```text
-POST /reservation/create/v2
-```
-
-必须保留 V1，使用相同的 JMeter 数据和环境比较两个版本。
-
-V2 设计：
-
-1. 复用现有组合校验链。
-2. 复用 `requestId` 幂等机制和数据库唯一索引。
-3. 去掉包围整个下单流程的 Redisson 大锁。
-4. 使用 Redis Lua 原子完成库存判断和扣减。
-5. 保留 MySQL 条件更新作为持久层一致性防线。
-6. 远程 Feign 调用期间不能持有分布式锁。
-7. 复用已经修正的确认和补偿机制。
-8. 在相同库存、并发量、机器和 JMeter 脚本下对比 V1 与 V2。
-
-Lua 脚本必须原子完成：
-
-```text
-读取库存
-判断库存 >= quantity
-扣减库存
-返回清晰的结果码
-```
-
-不要直接复制大麦 V2 的“本地锁 + 多把分布式锁”设计。FlowOrder 当前一次请求只涉及一个库存项，没有真实的多库存项加锁需求。
-
-V2 验收标准：
-
-- 正确性不能低于 V1。
-- 相同 `requestId` 并发请求仍然幂等。
-- 不能超卖。
-- 吞吐量有明确提升。
-- P95 有所下降，或者能够用证据定位新的瓶颈。
-- 压测报告能够解释为什么远程调用不应位于分布式锁范围内。
-
-## 15. 后续路线
-
-V2 完成后，默认按照以下顺序推进，除非实际测试结果要求调整。
-
-### 阶段 A：RabbitMQ 与订单超时
-
-- 发送订单创建事件。
-- 实现生产者 Confirm。
-- 实现消费者 ACK。
-- 实现消息消费幂等。
-- 实现失败重试和死信队列。
-- 通过延迟消息触发 15 分钟订单超时关闭。
-- 保留数据库定时扫描，作为延迟消息遗漏时的兜底。
-
-延迟消息只是触发器，不是最终事实来源。消费者必须查询订单当前状态，并通过条件更新完成状态流转。
-
-### 阶段 B：订单状态机
-
-- 确认订单。
-- 取消订单。
-- 超时关闭订单。
-- 完成履约。
-- 每次有效状态流转写入 `fo_order_status_log`。
-- 根据状态流转释放 `locked_stock`，或者将其转移到 `sold_stock`。
-
-### 阶段 C：稳定性与服务治理
-
-- Gateway 路由。
-- Sentinel 限流、熔断和降级。
-- 超时与重试策略。
-- 对异步任务使用独立线程池隔离。
-- TraceId 贯穿 HTTP、Feign、MQ 和定时任务。
-
-### 阶段 D：可观测性与问题排查
-
-- 慢接口日志。
-- Prometheus/Grafana 或 OpenTelemetry 基础接入。
-- 人为构造 OOM、CPU 飙高和死锁场景。
-- 记录排查命令、dump 证据、根因和解决过程。
-
-## 16. 与 AgentDesk 的集成边界
-
-FlowOrder 稳定后，需要逐步提供适合 Agent 调用的业务能力：
-
-- `queryOrder(requestId/orderNo)`
-- `queryInventory(stockItemId)`
-- `createReservation(...)`
-- `cancelReservation(orderNo)`
-- 后续工单领域的 `createTicket(...)`
-
-要求：
-
-- 查询类工具可以直接执行。
-- 创建、取消和状态修改类工具必须具备权限校验，并支持 Human-in-the-loop 人工确认。
-- 所有修改状态的接口都必须幂等。
-- 返回结构化错误码，让 Agent 能够区分业务失败和传输失败。
-- 保留 TraceId，让 AgentDesk 可以关联模型、工具调用和业务系统日志。
-
-## 17. 编码规范
-
-- 新代码优先使用构造器注入；如果修改旧类会造成与任务无关的大范围改动，可以暂时沿用现有注入方式。
-- 文件使用 UTF-8，保证中文注释可读。
-- 注释重点解释业务不变量、异常语义和设计原因，不要逐句翻译 Java 代码。
-- 事务边界放在 Spring 管理的 Service 方法中。
-- 依赖 `@Transactional` 时，注意同类内部调用不会经过 Spring 代理。
-- 除非有明确理由，不能在本地数据库事务中执行远程调用。
-- 不能在远程调用期间持有分布式锁。
-- 状态流转必须使用类似 `WHERE status = ?` 的条件更新。
-- 所有重试操作都必须幂等。
-- 结果未知时，不能捕获异常后伪装成明确业务失败。
-- Feign 路径必须与 Controller 路径保持一致。当前订单查询路径为 `/order/query`。
-- 修改状态流转、补偿或幂等逻辑时，需要补充针对性的测试。
-
-## 18. 构建与运行检查
-
-当前 V1 依赖的基础设施和服务启动顺序：
+基础设施和服务启动顺序：
 
 1. MySQL。
 2. Redis。
-3. Nacos。
-4. order-service。
-5. resource-service。
-6. 只有测试路径经过网关时才需要启动 Gateway。
+3. RabbitMQ。
+4. Nacos。
+5. order-service。
+6. resource-service。
+7. gateway-service。
 
-从仓库根目录构建 resource-service：
+排查顺序优先从请求日志、数据库状态、Outbox、消费日志、RabbitMQ 队列/DLQ、Redis 库存到线程 dump，避免只根据一个异常文本下结论。
 
-```powershell
-mvn -pl floworder-server/floworder-resource-service -am test
-```
+## 14. 编码约束
 
-修改 Feign DTO 或接口契约后，还需要构建 order-service：
+- 文件统一 UTF-8。
+- 优先使用构造器注入；旧代码大范围改造不应混入无关任务。
+- 注释解释不变量、异常语义和设计原因，不逐句翻译代码。
+- 本地数据库事务内不执行远程调用。
+- 远程调用期间不持有 JVM 锁或分布式锁。
+- Spring 事务方法注意同类调用绕过代理问题。
+- 不用 `Thread.sleep`、无界线程池或无限重试掩盖流控问题。
+- 不把 MQ ACK 当作业务事务的一部分；先完成本地事务，再 ACK。
+- 不因消息乱序覆盖更晚的终态。
+- 不让补偿异常覆盖原始异常，必要时使用 suppressed exception。
+- 删除 Redis key 是数据库已成为事实来源后的安全降级手段，不要在 key 缺失时用 `INCRBY` 创建错误库存。
 
-```powershell
-mvn -pl floworder-server/floworder-order-service -am test
-```
+## 15. 技术路线防漂移
 
-测试服务不可用场景时，需要确认服务确实已经从 Nacos 下线，并检查底层 Feign 异常。进程启动成功不代表服务发现、负载均衡、Controller 路径和序列化一定正常。
+在当前缺口关闭和系统化复盘完成前，不主动增加：
 
-## 19. 完成定义
+- Seata。
+- 分库分表。
+- 多库存项加锁和复杂座位模型。
+- Kafka 与 RabbitMQ 双 MQ。
+- Kubernetes。
+- Prometheus/Grafana。
+- OpenTelemetry/SkyWalking。
+- 集中式日志平台。
 
-只有同时满足以下条件，一个版本或功能才能算完成：
+需要这些技术时，先写清当前方案无法解决的问题、引入成本、替代方案和验证指标。
 
-- 主流程代码已经实现。
-- 数据库和 Redis 不变量已经验证。
-- 异常、重试和补偿路径已经测试。
-- JMeter 或针对性自动化测试覆盖了目标行为。
-- 日志包含足够的故障定位信息。
-- 能从问题、备选方案、设计取舍和实测结果四个角度解释实现。
-- 架构或版本边界发生实质变化时，同步更新 README 和本文件。
+`damai_pro` 仅用于比较工程思路，例如锁粒度、幂等、消息处理和延迟关闭。FlowOrder 不迁移大麦特有的节目、票档、座位和营销模型。
 
-项目目标不是证明使用过多少技术，而是证明每个技术都解决了真实工程问题，并且效果可以通过测试数据和系统状态验证。
+## 16. 完成定义
+
+一项功能只有同时满足以下条件才算完成：
+
+- 主流程和异常流程均已实现。
+- 状态转换、事务边界和幂等条件可解释。
+- 数据库、Redis 和消息不变量已验证。
+- 重试、补偿、死信和人工恢复路径有明确终点。
+- 有针对性自动化测试或可重复实验。
+- 日志和指标足以定位故障。
+- 能说明为什么没有选择更复杂或更简单的方案。
+- 结论有代码、测试数据或运行证据支持。
+
+项目最终目标不是证明使用过多少技术，而是证明能围绕并发、一致性、可靠性、服务治理和故障排查完成一套可验证的工程闭环。

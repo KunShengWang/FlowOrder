@@ -14,7 +14,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
-import static com.javaup.constant.OrderMqConstant.ORDER_SERVICE;
 import static com.javaup.constant.OrderMqConstant.RESOURCE_SERVICE;
 
 @Service

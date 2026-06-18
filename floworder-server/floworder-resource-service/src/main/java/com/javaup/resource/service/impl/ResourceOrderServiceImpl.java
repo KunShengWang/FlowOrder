@@ -239,7 +239,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             }
             throw e;
         } catch (RuntimeException e) {
-            compensateRedisSafely(stockKey,createDto.getQuantity(),e);
+            invalidateRedisSafely(stockKey,e);
             throw e;
         }
     }
@@ -673,6 +673,14 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
                     originalException
             );
             // 这里不会抛异常，因为这里的异常是挂在调用方的异常上的，调用方会抛出异常
+        }
+    }
+
+    private void invalidateRedisSafely(String stockKey, RuntimeException originalException) {
+        try {
+            stringRedisTemplate.delete(stockKey);
+        } catch (RuntimeException deleteException) {
+            originalException.addSuppressed(deleteException);
         }
     }
 
