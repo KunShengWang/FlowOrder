@@ -5,6 +5,7 @@ CREATE DATABASE IF NOT EXISTS floworder
 USE floworder;
 
 DROP TABLE IF EXISTS fo_order_status_log;
+DROP TABLE IF EXISTS fo_mq_dead_letter;
 DROP TABLE IF EXISTS fo_mq_consume_log;
 DROP TABLE IF EXISTS fo_mq_outbox;
 DROP TABLE IF EXISTS fo_stock_deduct_record;
@@ -189,3 +190,31 @@ CREATE TABLE fo_order_status_log (
     KEY idx_order_no (order_no),
     KEY idx_event (event)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单状态流转日志表';
+
+CREATE TABLE fo_mq_dead_letter (
+   id BIGINT NOT NULL PRIMARY KEY,
+   message_id VARCHAR(64) NOT NULL,
+   dead_queue VARCHAR(128) NOT NULL,
+   producer_service VARCHAR(64) NOT NULL,
+   message_type VARCHAR(64) DEFAULT NULL,
+   biz_key VARCHAR(128) DEFAULT NULL,
+   exchange_name VARCHAR(128) NOT NULL,
+   routing_key VARCHAR(128) NOT NULL,
+   content TEXT NOT NULL,
+   death_reason VARCHAR(255) DEFAULT NULL,
+   status TINYINT NOT NULL DEFAULT 0
+       COMMENT '0待处理 10重放中 20已解决 30已忽略',
+   replay_count INT NOT NULL DEFAULT 0,
+   last_error VARCHAR(1024) DEFAULT NULL,
+   replayed_at DATETIME DEFAULT NULL,
+   resolved_at DATETIME DEFAULT NULL,
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+       ON UPDATE CURRENT_TIMESTAMP,
+   handled_by VARCHAR(64) DEFAULT NULL COMMENT '处理人',
+   resolution_note VARCHAR(512) DEFAULT NULL COMMENT '处理说明',
+   UNIQUE KEY uk_queue_message (dead_queue, message_id),
+   KEY idx_status_replayed (status, replayed_at),
+   KEY idx_status_created (status, created_at),
+   KEY idx_biz_key (biz_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MQ消费死信处理记录';

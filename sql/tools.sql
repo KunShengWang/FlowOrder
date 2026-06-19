@@ -1,3 +1,4 @@
+DELETE FROM fo_mq_dead_letter;
 DELETE FROM fo_mq_consume_log;
 DELETE FROM fo_mq_outbox;
 DELETE FROM fo_stock_deduct_record;

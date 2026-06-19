@@ -2,6 +2,7 @@ package com.javaup.resource.mq.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.dto.OrderStateChangedMessage;
+import com.javaup.resource.mq.service.MqDeadLetterService;
 import com.javaup.resource.mq.service.OrderStateMessageService;
 import com.rabbitmq.client.Channel;
 import jakarta.annotation.Resource;
@@ -37,6 +38,9 @@ public class OrderStateConsumer {
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private MqDeadLetterService deadLetterService;
+
     @RabbitListener(
             queues = ORDER_STATE_QUEUE,
             containerFactory = "orderStateListenerContainerFactory"
@@ -68,6 +72,7 @@ public class OrderStateConsumer {
                     if (stockItemId != null) {
                         stringRedisTemplate.delete(FLOWORDER_STOCK + stockItemId);
                     }
+                    deadLetterService.resolveOrderState(message);
                     channel.basicAck(deliveryTag, false);
                     return;
                 }catch (IllegalArgumentException protocolException) {

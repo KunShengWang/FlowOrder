@@ -27,6 +27,11 @@ public class ResourceRabbitListenerConfig {
     }
 
     @Bean
+    public ThreadPoolTaskExecutor deadLetterConsumerExecutor() {
+        return buildExecutor("dead-letter-consumer-", 1, 1);
+    }
+
+    @Bean
     public SimpleRabbitListenerContainerFactory orderResultListenerContainerFactory(
             ConnectionFactory connectionFactory,
             @Qualifier("orderResultConsumerExecutor")
@@ -57,6 +62,20 @@ public class ResourceRabbitListenerConfig {
                 concurrentConsumers,
                 maxConcurrentConsumers,
                 prefetch
+        );
+    }
+
+    @Bean
+    public SimpleRabbitListenerContainerFactory deadLetterListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            @Qualifier("deadLetterConsumerExecutor")
+            ThreadPoolTaskExecutor deadLetterConsumerExecutor) {
+        return buildFactory(
+                connectionFactory,
+                deadLetterConsumerExecutor,
+                1,
+                1,
+                1
         );
     }
 

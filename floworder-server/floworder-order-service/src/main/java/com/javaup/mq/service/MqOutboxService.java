@@ -29,4 +29,6 @@ public interface MqOutboxService {
     void retryDead(String messageId);
 
     void replaySent(String messageId);
+
+    void replayConsumerDead(String messageId);
 }

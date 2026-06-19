@@ -37,4 +37,10 @@ public class MqOutboxAdminController {
         outboxService.replaySent(messageId);
         return ApiResponse.success();
     }
+
+    @PostMapping("/consumer-dead/{messageId}/replay")
+    public ApiResponse<Void> replayConsumerDead(@PathVariable String messageId) {
+        outboxService.replayConsumerDead(messageId);
+        return ApiResponse.success();
+    }
 }

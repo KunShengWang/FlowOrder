@@ -203,6 +203,10 @@ FlowOrder 能提供真实场景，但不能代替系统学习。以下内容需�
 - 订单服务幂等消费，在同一事务中创建订单、写消费日志和订单结果 Outbox。
 - 资源服务消费订单结果，确认订单创建或释放锁定库存。
 - 包含持久化消息、Publisher Confirm/Return、手动 ACK、消费幂等、有限重试、DLQ 和发送租约。
+- 消费死信使用 `fo_mq_dead_letter` 持久化原消息、失败来源、处理状态和人工操作信息；数据库事务提交后才 ACK DLQ。
+- 创建命令死信代表订单结果未知，只能把 `PRE_DEDUCTED` 转为 `MANUAL_REVIEW` 并继续锁定库存，不能直接释放库存。
+- 死信支持人工重放、消费成功确认、人工忽略和 `REPLAYING` 超时回收；结果/状态死信通过 order-service 原 Outbox 重放，创建命令通过 resource-service 原 Outbox 重放。
+- 上述死信闭环代码已经实现并通过编译，但故障注入、重复重放、多实例扫描和业务不变量实验尚未全部完成，因此暂时不能表述为已经生产验证。
 
 ### V4：订单状态机和超时闭环
 
@@ -281,6 +285,15 @@ Outbox 状态：
 - `30 RETRY`。
 - `40 DEAD`。
 
+消费死信状态：
+
+- `0 PENDING`：已从 RabbitMQ DLQ 持久化，等待处理。
+- `10 REPLAYING`：已抢占并发起原 Outbox 重放，等待业务结果确认。
+- `20 RESOLVED`：结果/状态消息完成消费，或者扫描确认业务状态已经收敛。
+- `30 IGNORED`：经人工确认后忽略；必须记录处理人和原因。
+
+死信状态和库存状态不是一回事。死信进入 `RESOLVED` 只表示对应恢复动作已经完成；库存仍必须满足领域状态机和库存恒等式。
+
 幂等要求：
 
 - 相同 `requestId` 必须对应同一用户、资源、库存项、数量和订单参数。
@@ -321,6 +334,26 @@ Outbox 状态：
 - 业务失败可以生成明确失败结果；技术异常不能伪装成业务失败。
 - 消费者有限重试后进入 DLQ，不允许无限阻塞消费线程。
 - Redis 缓存清理失败时不能直接 ACK；应依靠消息重投继续删除缓存。
+- RabbitMQ DLQ 与 Outbox `DEAD` 是两种故障：前者表示 Broker 已接收但消费者最终失败，后者表示生产端可靠发送失败，排查和恢复入口不能混用。
+- DLQ 消息必须先完整写入 `fo_mq_dead_letter`，再 ACK RabbitMQ；落库失败时重新入队，不能丢弃唯一副本。
+- 创建命令死信的重放由本地事务原子完成：死信抢占、`MANUAL_REVIEW -> PRE_DEDUCTED` 和 resource-service Outbox 恢复发送必须一起提交。
+- 结果/状态死信需要 Feign 调用 order-service 恢复原 Outbox。远程调用不得放进数据库事务；响应丢失时依靠相同 `messageId`、Outbox 状态幂等和消费幂等承受重复调用。
+- 只有业务处理、Redis 缓存删除和死信解决状态均成功后，普通消费者才能 ACK。
+- `REPLAYING` 超时后，扫描任务重新开放处理权；创建命令同时恢复为 `MANUAL_REVIEW`，库存仍保留在 `locked_stock`。
+
+### 9.1 消费死信代码学习顺序
+
+学习时按消息生命周期阅读，不按文件创建顺序阅读：
+
+1. 从 `OrderCreateConsumer`、`OrderResultConsumer`、`OrderStateConsumer` 的有限重试和 `basicNack(..., false, false)` 开始，理解消息如何进入 DLQ。
+2. 阅读三个 Rabbit 配置和 `OrderMqConstant`，画出普通队列、DLX、dead routing key、DLQ 的路由关系。
+3. 阅读 `MqDeadLetterConsumer`，理解原始消息、`messageId`、`consumerQueue`、`x-death`、事务提交和 ACK/NACK 顺序。
+4. 阅读 `MqDeadLetterServiceImpl.record()`、`buildEntity()`、`isolateUncertainCreate()`，理解为什么结果未知只能转人工审核而不能释放库存。
+5. 阅读 `replay()`、`claimReplay()`、`replayCreate()` 和两侧 `replayConsumerDead()`，重点解释 `TransactionTemplate` 如何避免把 Feign 放进数据库事务。
+6. 阅读 `resolveOrderResult()`、`resolveOrderState()` 以及两个普通消费者中的调用位置，确认解决死信发生在 Redis 删除之后、ACK 之前。
+7. 最后阅读 `ignore()`、`isBusinessConverged()`、`recoverStaleReplaying()` 和 `MqDeadLetterMonitorTask`，理解人工兜底、超时回收和基础告警边界。
+
+学习时至少手画 `PENDING -> REPLAYING -> RESOLVED/IGNORED` 状态图，并分别跟踪创建命令、创建结果和订单状态三类死信。不要只记类名和注解。
 
 当前发布器在后台线程中同步等待最多 5 秒的 Publisher Confirm。这不会阻塞用户请求，是简单可靠的基线。若要异步化，优先采用有界发布线程池；真正的异步 Confirm 回调还必须具备：专用有界执行器、最大在途数量、超时、租约协调、拒绝处理和优雅停机。不能只删除 `getFuture().get()` 或直接添加无界 `@Async`。
 
@@ -328,9 +361,9 @@ Outbox 状态：
 
 以下内容尚未形成完整闭环，不能在简历中包装为已完成：
 
-1. RabbitMQ 消费死信闭环不完整。订单创建、订单结果和订单状态都有 DLQ，但没有完整的 DLQ 查询、告警、自动转人工审核和处理记录。
-2. resource-service 和 order-service 已有 Outbox `DEAD` 重试及 `SENT` 重放管理接口，但仍需要把 DLQ 消息发现、人工重放、结果确认和死信清理串成可操作流程。
-3. 异步预扣发生技术异常时不能直接释放库存，因为订单提交结果可能未知。无法确认时应保持锁定并转 `MANUAL_REVIEW`。
+1. RabbitMQ 消费死信的代码链路已经形成，但尚缺系统化验证：三类 DLQ 故障注入、重复/并发重放、Feign 响应丢失、`REPLAYING` 超时、多实例扫描和库存不变量都需要可重复实验。
+2. 当前“告警”只是定时任务 `ERROR` 日志，尚未接入外部通知、指标和处理时长统计；不能描述为完整生产告警平台。
+3. 死信管理接口依赖 `floworder.admin.enabled=true`，目前没有认证、授权和操作人身份可信校验；`force=true` 忽略属于高风险本地学习能力。
 4. 对数据库事务的通用异常进行 Redis 补偿时，要区分“确定回滚”和“提交结果未知”。结果未知时优先删除 Redis key，从 MySQL 重建，避免盲目增加库存。
 5. V6 仍需完成 Actuator 实验记录、压力下线程 dump 分析和 `docs/v6-observability-troubleshooting.md`。
 6. Outbox 同步等待 Confirm 是否需要并发化，必须先用积压量、发送吞吐、确认延迟和故障恢复时间证明瓶颈。
@@ -341,6 +374,12 @@ Outbox 状态：
 GET  /internal/mq/outbox/dead
 POST /internal/mq/outbox/dead/{messageId}/retry
 POST /internal/mq/outbox/sent/{messageId}/replay
+POST /internal/mq/outbox/consumer-dead/{messageId}/replay
+
+GET  /internal/mq/dead-letter?status={status}&limit={limit}
+GET  /internal/mq/dead-letter/{id}
+POST /internal/mq/dead-letter/{id}/replay?operator={operator}
+POST /internal/mq/dead-letter/{id}/ignore?operator={operator}&reason={reason}&force={force}
 ```
 
 这些接口属于本地学习和运维恢复能力，正式暴露前必须增加认证、授权、审计和防误操作约束。
@@ -372,6 +411,7 @@ V6 已观察到 HTTP 请求和 MQ 创建/结果链路中的 `traceId`、`request
 - MySQL 条件更新失败和事务回滚。
 - Feign 业务失败、连接失败、超时、空响应和结果未知。
 - RabbitMQ NACK、Return、Confirm 超时、重复投递、消费异常、DLQ 和 Outbox 租约回收。
+- 消费死信落库成功/失败、创建命令转人工审核、并发抢占、重放次数上限、远程重放响应丢失、业务收敛确认、强制忽略和超时回收。
 - 订单确认、取消、超时以及消息乱序。
 - 服务停止时正在执行 HTTP、MQ 和定时任务。
 
@@ -379,7 +419,7 @@ V6 已观察到 HTTP 请求和 MQ 创建/结果链路中的 `traceId`、`request
 
 性能实验记录：Throughput、Average、P90/P95/P99、Max、HTTP 错误率、业务错误率、库存不变量和消息积压。正式压测关闭 JMeter `View Results Tree`。
 
-已有针对订单状态机并发和 MQ 状态消费的测试，但新增或修改状态、补偿、幂等、DLQ、Outbox 逻辑时仍需增加对应测试，不能用上下文启动测试代替业务断言。
+已有针对订单状态机并发、MQ 状态消费和部分死信落库/ACK 行为的测试，但死信重放、忽略、超时回收和多实例竞争测试仍不完整。新增或修改状态、补偿、幂等、DLQ、Outbox 逻辑时必须增加对应测试，不能用编译通过或上下文启动测试代替业务断言。
 
 ## 13. 构建、启动与排查
 

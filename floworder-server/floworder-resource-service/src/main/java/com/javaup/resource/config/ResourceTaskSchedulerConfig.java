@@ -22,6 +22,13 @@ public class ResourceTaskSchedulerConfig {
         return buildScheduler("stock-compensation-", poolSize);
     }
 
+    @Bean(name = "deadLetterTaskScheduler", destroyMethod = "shutdown")
+    public ThreadPoolTaskScheduler deadLetterTaskScheduler(
+            @Value("${floworder.thread-pool.dead-letter-monitor.size:1}")
+            int poolSize) {
+        return buildScheduler("dead-letter-monitor-", poolSize);
+    }
+
     private ThreadPoolTaskScheduler buildScheduler(String threadNamePrefix, int poolSize) {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
         scheduler.setPoolSize(poolSize);// 1个调度线程

@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.javaup.resource.entity.MqOutboxEntity;
 import com.javaup.resource.mapper.MqOutboxMapper;
 import jakarta.annotation.Resource;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -148,6 +149,39 @@ public class MqOutboxServiceImpl implements MqOutboxService {
     @Override
     public void replaySent(String messageId) {
         resetOutbox(messageId, STATUS_SENT, "人工重放已发送消息");
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void replayConsumerDead(String messageId) {
+        MqOutboxEntity outbox = mqOutboxMapper.selectOne(
+                Wrappers.<MqOutboxEntity>lambdaQuery()
+                        .eq(MqOutboxEntity::getMessageId, messageId)
+                        .eq(MqOutboxEntity::getProducerService, RESOURCE_SERVICE)
+                        .last("limit 1")
+        );
+
+        if (outbox == null) {
+            throw new BizException("原始Outbox消息不存在");
+        }
+        // 已确认状态
+        if (Objects.equals(outbox.getStatus(), STATUS_SENT)) {
+            resetOutbox(messageId, STATUS_SENT, "消费死信人工重放");
+            return;
+        }
+        // 死亡状态
+        if (Objects.equals(outbox.getStatus(), STATUS_DEAD)) {
+            resetOutbox(messageId, STATUS_DEAD, "消费死信恢复发送");
+            return;
+        }
+
+        if (Objects.equals(outbox.getStatus(), STATUS_NEW)
+                || Objects.equals(outbox.getStatus(), STATUS_SENDING)
+                || Objects.equals(outbox.getStatus(), STATUS_RETRY)) {
+            return;
+        }
+
+        throw new BizException("当前Outbox状态不允许重放");
     }
 
     private void resetOutbox(String messageId, int expectedStatus, String reason) {

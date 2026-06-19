@@ -139,6 +139,7 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
         MqConsumeLogEntity log = new MqConsumeLogEntity();
         log.setMessageId(message.getMessageId());
         log.setConsumerGroup(ORDER_RESULT_CONSUMER);
+        // ORDER_CREATE_SUCCEEDED or ORDER_CREATE_FAILED
         log.setMessageType(message.getEventType());
         log.setBizKey(message.getDeductNo());
         log.setStatus(0);

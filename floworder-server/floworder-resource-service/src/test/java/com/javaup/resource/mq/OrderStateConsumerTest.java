@@ -3,6 +3,7 @@ package com.javaup.resource.mq;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.dto.OrderStateChangedMessage;
 import com.javaup.resource.mq.consumer.OrderStateConsumer;
+import com.javaup.resource.mq.service.MqDeadLetterService;
 import com.javaup.resource.mq.service.OrderStateMessageService;
 import com.rabbitmq.client.Channel;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,9 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class OrderStateConsumerTest {
+
+    @Mock
+    private MqDeadLetterService deadLetterService;
 
     @Mock
     private OrderStateMessageService messageService;
