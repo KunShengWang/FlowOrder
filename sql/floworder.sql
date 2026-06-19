@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS fo_mq_consume_log;
 DROP TABLE IF EXISTS fo_mq_outbox;
 DROP TABLE IF EXISTS fo_stock_deduct_record;
 DROP TABLE IF EXISTS fo_reservation_order;
+DROP TABLE IF EXISTS fo_user_reservation_quota;
 DROP TABLE IF EXISTS fo_stock_item;
 DROP TABLE IF EXISTS fo_resource;
 
@@ -46,6 +47,23 @@ CREATE TABLE fo_stock_item (
     KEY idx_resource_id (resource_id),
     KEY idx_status_time (status, start_time, end_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='库存项表';
+
+CREATE TABLE fo_user_reservation_quota (
+   id BIGINT NOT NULL PRIMARY KEY,
+   resource_id BIGINT NOT NULL COMMENT '资源ID',
+   stock_item_id BIGINT NOT NULL COMMENT '库存项ID',
+   user_id BIGINT NOT NULL COMMENT '用户ID',
+   status TINYINT NOT NULL DEFAULT 1 COMMENT '资格状态：1有效 0无效',
+   limit_quantity INT NOT NULL COMMENT '当前库存项累计限购数量',
+   used_quantity INT NOT NULL DEFAULT 0 COMMENT '已预扣或已成交数量',
+   valid_from DATETIME DEFAULT NULL COMMENT '资格生效时间，为空表示不限制',
+   valid_until DATETIME DEFAULT NULL COMMENT '资格失效时间，为空表示不限制',
+   version INT NOT NULL DEFAULT 0 COMMENT '版本号',
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+   UNIQUE KEY uk_stock_item_user (stock_item_id, user_id),
+   KEY idx_resource_user_status (resource_id, user_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户预约资格与额度表';
 
 CREATE TABLE fo_reservation_order (
     id BIGINT NOT NULL PRIMARY KEY,
@@ -120,63 +138,44 @@ SET next_retry_time = COALESCE(next_retry_time, expire_time, NOW())
 WHERE status = 10;
 
 CREATE TABLE fo_mq_outbox (
-  id BIGINT NOT NULL PRIMARY KEY,
-  message_id VARCHAR(64) NOT NULL COMMENT '消息唯一ID',
-
-  producer_service VARCHAR(64) NOT NULL COMMENT '生产者服务',
-  biz_key VARCHAR(128) NOT NULL COMMENT '业务键，如deductNo/orderNo',
-  message_type VARCHAR(64) NOT NULL COMMENT '消息类型',
-
-  exchange_name VARCHAR(128) NOT NULL COMMENT 'RabbitMQ交换机',
-  routing_key VARCHAR(128) NOT NULL COMMENT 'RabbitMQ路由键',
-  content TEXT NOT NULL COMMENT '消息JSON内容',
-
-  status TINYINT NOT NULL DEFAULT 0
-      COMMENT '0待发送 10发送中 20已确认 30待重试 40死亡',
-
-  retry_count INT NOT NULL DEFAULT 0 COMMENT '发送重试次数',
-  next_retry_time DATETIME DEFAULT NULL COMMENT '下次发送时间',
-  claim_until DATETIME DEFAULT NULL COMMENT '发送任务抢占租约截止时间',
-
-  last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后发送错误',
-  sent_at DATETIME DEFAULT NULL COMMENT 'Broker确认时间',
-
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-      ON UPDATE CURRENT_TIMESTAMP,
-
-  UNIQUE KEY uk_message_id (message_id),
-  UNIQUE KEY uk_producer_biz_type
-      (producer_service, biz_key, message_type),
-
-  KEY idx_producer_status_retry
-      (producer_service, status, next_retry_time),
-
-  KEY idx_status_claim
-      (status, claim_until)
+    id BIGINT NOT NULL PRIMARY KEY,
+    message_id VARCHAR(64) NOT NULL COMMENT '消息唯一ID',
+    producer_service VARCHAR(64) NOT NULL COMMENT '生产者服务',
+    biz_key VARCHAR(128) NOT NULL COMMENT '业务键，如deductNo/orderNo',
+    message_type VARCHAR(64) NOT NULL COMMENT '消息类型',
+    exchange_name VARCHAR(128) NOT NULL COMMENT 'RabbitMQ交换机',
+    routing_key VARCHAR(128) NOT NULL COMMENT 'RabbitMQ路由键',
+    content TEXT NOT NULL COMMENT '消息JSON内容',
+    status TINYINT NOT NULL DEFAULT 0 COMMENT '0待发送 10发送中 20已确认 30待重试 40死亡',
+    retry_count INT NOT NULL DEFAULT 0 COMMENT '发送重试次数',
+    next_retry_time DATETIME DEFAULT NULL COMMENT '下次发送时间',
+    claim_until DATETIME DEFAULT NULL COMMENT '发送任务抢占租约截止时间',
+    last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后发送错误',
+    sent_at DATETIME DEFAULT NULL COMMENT 'Broker确认时间',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_message_id (message_id),
+    UNIQUE KEY uk_producer_biz_type
+        (producer_service, biz_key, message_type),
+    KEY idx_producer_status_retry
+        (producer_service, status, next_retry_time),
+    KEY idx_status_claim
+        (status, claim_until)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     COMMENT='MQ事务Outbox表';
 
 CREATE TABLE fo_mq_consume_log (
-   id BIGINT NOT NULL PRIMARY KEY,
-   message_id VARCHAR(64) NOT NULL COMMENT '消息唯一ID',
-   consumer_group VARCHAR(64) NOT NULL COMMENT '消费者组',
-   message_type VARCHAR(64) NOT NULL COMMENT '消息类型',
-   biz_key VARCHAR(128) NOT NULL COMMENT '业务键',
-
-   status TINYINT NOT NULL DEFAULT 0
-       COMMENT '0处理中 10消费成功',
-
-   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-       ON UPDATE CURRENT_TIMESTAMP,
-
-   UNIQUE KEY uk_message_consumer
-       (message_id, consumer_group),
-
-   KEY idx_biz_key (biz_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    COMMENT='MQ消费幂等记录表';
+    id BIGINT NOT NULL PRIMARY KEY,
+    message_id VARCHAR(64) NOT NULL COMMENT '消息唯一ID',
+    consumer_group VARCHAR(64) NOT NULL COMMENT '消费者组',
+    message_type VARCHAR(64) NOT NULL COMMENT '消息类型',
+    biz_key VARCHAR(128) NOT NULL COMMENT '业务键',
+    status TINYINT NOT NULL DEFAULT 0 COMMENT '0处理中 10消费成功',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_message_consumer (message_id, consumer_group),
+    KEY idx_biz_key (biz_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MQ消费幂等记录表';
 
 CREATE TABLE fo_order_status_log (
     id BIGINT NOT NULL PRIMARY KEY,
@@ -202,15 +201,13 @@ CREATE TABLE fo_mq_dead_letter (
    routing_key VARCHAR(128) NOT NULL,
    content TEXT NOT NULL,
    death_reason VARCHAR(255) DEFAULT NULL,
-   status TINYINT NOT NULL DEFAULT 0
-       COMMENT '0待处理 10重放中 20已解决 30已忽略',
+   status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 10重放中 20已解决 30已忽略',
    replay_count INT NOT NULL DEFAULT 0,
    last_error VARCHAR(1024) DEFAULT NULL,
    replayed_at DATETIME DEFAULT NULL,
    resolved_at DATETIME DEFAULT NULL,
    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-       ON UPDATE CURRENT_TIMESTAMP,
+   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
    handled_by VARCHAR(64) DEFAULT NULL COMMENT '处理人',
    resolution_note VARCHAR(512) DEFAULT NULL COMMENT '处理说明',
    UNIQUE KEY uk_queue_message (dead_queue, message_id),

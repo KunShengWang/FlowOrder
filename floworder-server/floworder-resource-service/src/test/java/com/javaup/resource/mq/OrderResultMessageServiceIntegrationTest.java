@@ -1,7 +1,7 @@
 package com.javaup.resource.mq;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.javaup.dto.OrderStateChangedMessage;
+import com.javaup.dto.OrderCreateResultMessage;
 import com.javaup.resource.entity.MqConsumeLogEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.entity.StockItemEntity;
@@ -10,7 +10,7 @@ import com.javaup.resource.mapper.MqConsumeLogMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.mapper.UserReservationQuotaMapper;
-import com.javaup.resource.mq.service.OrderStateMessageService;
+import com.javaup.resource.mq.service.OrderResultMessageService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.UUID;
 
 import static com.javaup.constant.OrderMqConstant.*;
-import static com.javaup.enums.OrderStatusEnum.*;
 import static com.javaup.resource.enums.StockDeductStatusEnum.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -33,10 +32,10 @@ import static org.junit.jupiter.api.Assertions.*;
         "floworder.compensation.enabled=false",
         "floworder.admin.enabled=false"
 })
-class OrderStateMessageServiceIntegrationTest {
+class OrderResultMessageServiceIntegrationTest {
 
     @Resource
-    private OrderStateMessageService messageService;
+    private OrderResultMessageService messageService;
 
     @Resource
     private StockItemMapper stockItemMapper;
@@ -45,10 +44,10 @@ class OrderStateMessageServiceIntegrationTest {
     private StockDeductRecordMapper deductRecordMapper;
 
     @Resource
-    private MqConsumeLogMapper consumeLogMapper;
+    private UserReservationQuotaMapper quotaMapper;
 
     @Resource
-    private UserReservationQuotaMapper quotaMapper;
+    private MqConsumeLogMapper consumeLogMapper;
 
     private final List<Long> stockItemIds = new ArrayList<>();
     private final List<Long> quotaIds = new ArrayList<>();
@@ -71,84 +70,50 @@ class OrderStateMessageServiceIntegrationTest {
     }
 
     @Test
-    void confirmShouldMoveLockedStockToSoldAndDuplicateMessageShouldBeIdempotent() {
-        Fixture fixture = insertFixture();
-        OrderStateChangedMessage message = stateMessage(fixture, ORDER_CONFIRMED);
-
-        assertNull(messageService.handle(message));
-        assertNull(messageService.handle(message));
-
-        assertStock(fixture, 7, 0, 3, SOLD.getCode());
-        assertQuota(fixture, 3);
-        assertEquals(1L, consumeLogCount(fixture.deductNo()));
-    }
-
-    @Test
-    void cancelShouldReleaseLockedStockAndDuplicateMessageShouldBeIdempotent() {
-        Fixture fixture = insertFixture();
-        OrderStateChangedMessage message = stateMessage(fixture, ORDER_CANCELLED);
+    void failedResultShouldReleaseStockAndQuotaOnlyOnce() {
+        Fixture fixture = insertFixture(PRE_DEDUCTED.getCode());
+        OrderCreateResultMessage message = resultMessage(fixture, false);
 
         assertEquals(fixture.stockItemId(), messageService.handle(message));
         assertEquals(fixture.stockItemId(), messageService.handle(message));
 
-        assertStock(fixture, 10, 0, 0, RELEASED.getCode());
-        assertQuota(fixture, 0);
+        assertState(fixture, 10, 0, 0, RELEASED.getCode());
         assertEquals(1L, consumeLogCount(fixture.deductNo()));
     }
 
     @Test
-    void cancelAfterConfirmShouldBeRejectedWithoutChangingInventory() {
-        Fixture fixture = insertFixture();
-        messageService.handle(stateMessage(fixture, ORDER_CONFIRMED));
+    void successfulResultShouldKeepQuotaAndMarkOrderCreated() {
+        Fixture fixture = insertFixture(PRE_DEDUCTED.getCode());
+        OrderCreateResultMessage message = resultMessage(fixture, true);
 
-        assertThrows(
-                IllegalStateException.class,
-                () -> messageService.handle(stateMessage(fixture, ORDER_CANCELLED))
-        );
+        assertNull(messageService.handle(message));
 
-        assertStock(fixture, 7, 0, 3, SOLD.getCode());
-        assertQuota(fixture, 3);
+        assertState(fixture, 7, 3, 3, ORDER_CREATED.getCode());
         assertEquals(1L, consumeLogCount(fixture.deductNo()));
     }
 
     @Test
-    void confirmAfterCancelShouldBeRejectedWithoutChangingInventory() {
-        Fixture fixture = insertFixture();
-        messageService.handle(stateMessage(fixture, ORDER_TIMEOUT));
+    void failedResultForManualReviewShouldRollbackQuotaReleaseAndConsumeLog() {
+        Fixture fixture = insertFixture(MANUAL_REVIEW.getCode());
+        OrderCreateResultMessage message = resultMessage(fixture, false);
 
-        assertThrows(
-                IllegalStateException.class,
-                () -> messageService.handle(stateMessage(fixture, ORDER_CONFIRMED))
-        );
+        assertThrows(IllegalStateException.class, () -> messageService.handle(message));
 
-        assertStock(fixture, 10, 0, 0, RELEASED.getCode());
-        assertQuota(fixture, 0);
-        assertEquals(1L, consumeLogCount(fixture.deductNo()));
-    }
-
-    @Test
-    void protocolOrBusinessKeyMismatchShouldNotWriteConsumeLogOrInventory() {
-        Fixture fixture = insertFixture();
-        OrderStateChangedMessage message = stateMessage(fixture, ORDER_CONFIRMED);
-        message.setStockItemId(fixture.stockItemId() + 1);
-
-        assertThrows(IllegalArgumentException.class, () -> messageService.handle(message));
-
-        assertStock(fixture, 7, 3, 0, ORDER_CREATED.getCode());
-        assertQuota(fixture, 3);
+        assertState(fixture, 7, 3, 3, MANUAL_REVIEW.getCode());
         assertEquals(0L, consumeLogCount(fixture.deductNo()));
     }
 
-    private Fixture insertFixture() {
+    private Fixture insertFixture(int recordStatus) {
         String suffix = UUID.randomUUID().toString();
-        long stockItemId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+        long stockItemId = positiveId();
+        long userId = positiveId();
         LocalDateTime now = LocalDateTime.now();
 
         StockItemEntity stock = new StockItemEntity();
         stock.setId(stockItemId);
-        stock.setStockItemCode("V4-STOCK-" + suffix);
+        stock.setStockItemCode("V7-RESULT-STOCK-" + suffix);
         stock.setResourceId(1L);
-        stock.setName("V4 test stock");
+        stock.setName("V7 result test stock");
         stock.setTotalStock(10);
         stock.setAvailableStock(7);
         stock.setLockedStock(3);
@@ -161,16 +126,18 @@ class OrderStateMessageServiceIntegrationTest {
         assertEquals(1, stockItemMapper.insert(stock));
         stockItemIds.add(stockItemId);
 
-        String deductNo = "V4-DEDUCT-" + suffix;
+        String deductNo = "V7-RESULT-DEDUCT-" + suffix;
+        String orderNo = "V7-RESULT-ORDER-" + suffix;
+        String requestId = "V7-RESULT-REQUEST-" + suffix;
         StockDeductRecordEntity record = new StockDeductRecordEntity();
         record.setDeductNo(deductNo);
-        record.setOrderNo("V4-ORDER-" + suffix);
-        record.setUserId(1L);
+        record.setOrderNo(orderNo);
+        record.setUserId(userId);
         record.setResourceId(1L);
         record.setStockItemId(stockItemId);
         record.setQuantity(3);
-        record.setRequestId("V4-REQUEST-" + suffix);
-        record.setStatus(ORDER_CREATED.getCode());
+        record.setRequestId(requestId);
+        record.setStatus(recordStatus);
         record.setExpireTime(now.plusMinutes(10));
         record.setCreatedAt(now);
         record.setUpdatedAt(now);
@@ -183,10 +150,10 @@ class OrderStateMessageServiceIntegrationTest {
         UserReservationQuotaEntity quota = new UserReservationQuotaEntity();
         quota.setResourceId(1L);
         quota.setStockItemId(stockItemId);
-        quota.setUserId(record.getUserId());
+        quota.setUserId(userId);
         quota.setStatus(1);
         quota.setLimitQuantity(5);
-        quota.setUsedQuantity(record.getQuantity());
+        quota.setUsedQuantity(3);
         quota.setValidFrom(now.minusHours(1));
         quota.setValidUntil(now.plusHours(1));
         quota.setVersion(0);
@@ -195,60 +162,33 @@ class OrderStateMessageServiceIntegrationTest {
         assertEquals(1, quotaMapper.insert(quota));
         quotaIds.add(quota.getId());
 
-        return new Fixture(stockItemId, deductNo, record.getOrderNo(), record.getUserId(), 3);
+        return new Fixture(stockItemId, userId, deductNo, orderNo, requestId);
     }
 
-    private OrderStateChangedMessage stateMessage(Fixture fixture, String eventType) {
-        OrderStateChangedMessage message = new OrderStateChangedMessage();
+    private OrderCreateResultMessage resultMessage(Fixture fixture, boolean success) {
+        OrderCreateResultMessage message = new OrderCreateResultMessage();
         message.setMessageId(UUID.randomUUID().toString());
-        message.setEventType(eventType);
-        message.setOrderNo(fixture.orderNo());
-        message.setDeductNo(fixture.deductNo());
-        message.setStockItemId(fixture.stockItemId());
-        message.setQuantity(fixture.quantity());
-        message.setFromStatus(RESERVED.getCode());
-        if (ORDER_CONFIRMED.equals(eventType)) {
-            message.setToStatus(CONFIRMED.getCode());
-        } else if (ORDER_CANCELLED.equals(eventType)) {
-            message.setToStatus(CANCELLED.getCode());
-        } else {
-            message.setToStatus(TIMEOUT.getCode());
-        }
+        message.setEventType(success ? ORDER_CREATE_SUCCEEDED : ORDER_CREATE_FAILED);
         message.setOccurredAt(LocalDateTime.now());
+        message.setRequestId(fixture.requestId());
+        message.setDeductNo(fixture.deductNo());
+        message.setOrderNo(success ? fixture.orderNo() : null);
+        message.setSuccess(success);
+        message.setErrorMessage(success ? null : "order rejected");
         return message;
     }
 
-    private void assertStock(
+    private void assertState(
             Fixture fixture,
             int available,
             int locked,
-            int sold,
+            int usedQuota,
             int recordStatus) {
         StockItemEntity stock = stockItemMapper.selectById(fixture.stockItemId());
         StockDeductRecordEntity record = deductRecordMapper.selectOne(
                 Wrappers.<StockDeductRecordEntity>lambdaQuery()
                         .eq(StockDeductRecordEntity::getDeductNo, fixture.deductNo())
         );
-
-        assertEquals(available, stock.getAvailableStock());
-        assertEquals(locked, stock.getLockedStock());
-        assertEquals(sold, stock.getSoldStock());
-        assertEquals(stock.getTotalStock(),
-                stock.getAvailableStock() + stock.getLockedStock() + stock.getSoldStock());
-        assertTrue(stock.getAvailableStock() >= 0);
-        assertTrue(stock.getLockedStock() >= 0);
-        assertTrue(stock.getSoldStock() >= 0);
-        assertEquals(recordStatus, record.getStatus());
-    }
-
-    private Long consumeLogCount(String deductNo) {
-        return consumeLogMapper.selectCount(
-                Wrappers.<MqConsumeLogEntity>lambdaQuery()
-                        .eq(MqConsumeLogEntity::getBizKey, deductNo)
-        );
-    }
-
-    private void assertQuota(Fixture fixture, int usedQuantity) {
         UserReservationQuotaEntity quota = quotaMapper.selectOne(
                 Wrappers.<UserReservationQuotaEntity>lambdaQuery()
                         .eq(UserReservationQuotaEntity::getStockItemId,
@@ -256,17 +196,34 @@ class OrderStateMessageServiceIntegrationTest {
                         .eq(UserReservationQuotaEntity::getUserId,
                                 fixture.userId())
         );
+
+        assertNotNull(stock);
+        assertNotNull(record);
         assertNotNull(quota);
-        assertEquals(usedQuantity, quota.getUsedQuantity());
-        assertTrue(quota.getUsedQuantity() >= 0);
-        assertTrue(quota.getUsedQuantity() <= quota.getLimitQuantity());
+        assertEquals(available, stock.getAvailableStock());
+        assertEquals(locked, stock.getLockedStock());
+        assertEquals(10,
+                stock.getAvailableStock() + stock.getLockedStock() + stock.getSoldStock());
+        assertEquals(usedQuota, quota.getUsedQuantity());
+        assertEquals(recordStatus, record.getStatus());
+    }
+
+    private long consumeLogCount(String deductNo) {
+        return consumeLogMapper.selectCount(
+                Wrappers.<MqConsumeLogEntity>lambdaQuery()
+                        .eq(MqConsumeLogEntity::getBizKey, deductNo)
+        );
+    }
+
+    private long positiveId() {
+        return UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
     }
 
     private record Fixture(
             Long stockItemId,
+            Long userId,
             String deductNo,
             String orderNo,
-            Long userId,
-            Integer quantity) {
+            String requestId) {
     }
 }

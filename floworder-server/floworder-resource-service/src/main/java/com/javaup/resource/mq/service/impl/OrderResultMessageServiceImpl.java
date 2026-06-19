@@ -9,6 +9,7 @@ import com.javaup.resource.mapper.MqConsumeLogMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.mq.service.OrderResultMessageService;
+import com.javaup.resource.service.ReservationAdmissionService;
 import jakarta.annotation.Resource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,9 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
 
     @Resource
     private StockItemMapper stockItemMapper;
+
+    @Resource
+    private ReservationAdmissionService reservationAdmissionService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -87,16 +91,22 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
     }
 
     private void release(StockDeductRecordEntity record, String reason) {
-        if (Objects.equals(record.getStatus(), 30)) {
+        if (Objects.equals(record.getStatus(), 30)) {// 已释放
             return;
         }
+        /*
+         * 必须先锁额度，再修改库存。
+         * 如果后续预扣记录或库存更新失败，
+         * @Transactional会回滚本次额度归还。
+         */
+        reservationAdmissionService.releaseQuota(record);
         int recordRows = stockDeductRecordMapper.update(
                 null,
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
                         .eq(StockDeductRecordEntity::getCreateMode, 3)
-                        .eq(StockDeductRecordEntity::getStatus, 10)
-                        .set(StockDeductRecordEntity::getStatus, 30)
+                        .eq(StockDeductRecordEntity::getStatus, 10)// 已预扣
+                        .set(StockDeductRecordEntity::getStatus, 30)// 已释放
                         .set(StockDeductRecordEntity::getReleaseReason, limitReason(reason))
         );
         if (recordRows != 1) {

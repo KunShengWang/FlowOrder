@@ -9,6 +9,7 @@ import com.javaup.resource.mapper.MqConsumeLogMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.mq.service.OrderStateMessageService;
+import com.javaup.resource.service.ReservationAdmissionService;
 import jakarta.annotation.Resource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,9 @@ public class OrderStateMessageServiceImpl implements OrderStateMessageService {
 
     @Resource
     private StockItemMapper stockItemMapper;
+
+    @Resource
+    private ReservationAdmissionService reservationAdmissionService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -138,6 +142,11 @@ public class OrderStateMessageServiceImpl implements OrderStateMessageService {
         if (Objects.equals(record.getStatus(), SOLD.getCode())) {
             throw new IllegalStateException("库存已经成交，不能再释放");
         }
+        /*
+         * 额度 -> 预扣记录 -> 库存。
+         * 后续任何一步失败时，额度归还一起回滚。
+         */
+        reservationAdmissionService.releaseQuota(record);
         int recordRows = deductRecordMapper.update(
                 null,
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
