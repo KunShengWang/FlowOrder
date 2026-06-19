@@ -591,11 +591,23 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
 
             if (ORDER_STATE_DLQ.equals(dead.getDeadQueue())) {
                 OrderStateChangedMessage message = objectMapper.readValue(
-                        dead.getContent(), OrderStateChangedMessage.class);
+                        dead.getContent(),
+                        OrderStateChangedMessage.class
+                );
 
-                return ORDER_CONFIRMED.equals(message.getEventType())
-                        ? Objects.equals(status, SOLD.getCode())
-                        : Objects.equals(status, RELEASED.getCode());
+                String eventType = message.getEventType();
+
+                if (ORDER_CONFIRMED.equals(eventType)) {
+                    return Objects.equals(status, SOLD.getCode());
+                }
+
+                if (ORDER_CANCELLED.equals(eventType)
+                        || ORDER_TIMEOUT.equals(eventType)) {
+                    return Objects.equals(status, RELEASED.getCode());
+                }
+
+                // 未知、为空或未来新增但尚未支持的事件，不能视为业务已收敛
+                return false;
             }
         } catch (JsonProcessingException ignored) {
             return false;

@@ -5,7 +5,10 @@ import com.javaup.client.OrderMqAdminClient;
 import com.javaup.dto.CreateOrderDto;
 import com.javaup.dto.OrderCreateMessage;
 import com.javaup.dto.OrderCreateResultMessage;
+import com.javaup.dto.OrderStateChangedMessage;
+import com.javaup.exception.BizException;
 import com.javaup.resource.entity.MqDeadLetterEntity;
+import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.mapper.MqDeadLetterMapper;
 import com.javaup.resource.mapper.MqOutboxMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
@@ -20,7 +23,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import static com.javaup.constant.OrderMqConstant.*;
+import static com.javaup.resource.enums.StockDeductStatusEnum.RELEASED;
+import static com.javaup.resource.enums.StockDeductStatusEnum.SOLD;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -104,5 +110,69 @@ class MqDeadLetterServiceTest {
 
         verify(deadLetterMapper).insert(any(MqDeadLetterEntity.class));
         verifyNoInteractions(deductRecordMapper);
+    }
+
+    @Test
+    void confirmedStateDeadLetterShouldBeConvergedWhenStockIsSold() throws Exception {
+        mockOrderStateDeadLetter(ORDER_CONFIRMED, SOLD.getCode());
+        when(deadLetterMapper.update(any(), any())).thenReturn(1);
+
+        service.ignore(1L, "admin", "business converged", false);
+
+        verify(deadLetterMapper).update(any(), any());
+    }
+
+    @Test
+    void cancelledStateDeadLetterShouldBeConvergedWhenStockIsReleased() throws Exception {
+        mockOrderStateDeadLetter(ORDER_CANCELLED, RELEASED.getCode());
+        when(deadLetterMapper.update(any(), any())).thenReturn(1);
+
+        service.ignore(1L, "admin", "business converged", false);
+
+        verify(deadLetterMapper).update(any(), any());
+    }
+
+    @Test
+    void timeoutStateDeadLetterShouldBeConvergedWhenStockIsReleased() throws Exception {
+        mockOrderStateDeadLetter(ORDER_TIMEOUT, RELEASED.getCode());
+        when(deadLetterMapper.update(any(), any())).thenReturn(1);
+
+        service.ignore(1L, "admin", "business converged", false);
+
+        verify(deadLetterMapper).update(any(), any());
+    }
+
+    @Test
+    void unknownStateDeadLetterShouldNotBeConvergedWhenStockIsReleased() throws Exception {
+        mockOrderStateDeadLetter("UNKNOWN_EVENT", RELEASED.getCode());
+
+        BizException exception = assertThrows(
+                BizException.class,
+                () -> service.ignore(1L, "admin", "invalid event", false)
+        );
+
+        assertEquals("业务状态尚未收敛，不能忽略死信", exception.getMessage());
+        verify(deadLetterMapper, never()).update(any(), any());
+    }
+
+    private void mockOrderStateDeadLetter(String eventType, int deductStatus) throws Exception {
+        OrderStateChangedMessage message = new OrderStateChangedMessage();
+        message.setMessageId("state-message-1");
+        message.setEventType(eventType);
+        message.setDeductNo("deduct-state-1");
+
+        MqDeadLetterEntity deadLetter = new MqDeadLetterEntity();
+        deadLetter.setId(1L);
+        deadLetter.setDeadQueue(ORDER_STATE_DLQ);
+        deadLetter.setBizKey(message.getDeductNo());
+        deadLetter.setContent(objectMapper.writeValueAsString(message));
+        deadLetter.setStatus(0);
+
+        StockDeductRecordEntity deductRecord = new StockDeductRecordEntity();
+        deductRecord.setDeductNo(message.getDeductNo());
+        deductRecord.setStatus(deductStatus);
+
+        when(deadLetterMapper.selectById(1L)).thenReturn(deadLetter);
+        when(deductRecordMapper.selectOne(any())).thenReturn(deductRecord);
     }
 }
