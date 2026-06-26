@@ -5,6 +5,7 @@ CREATE DATABASE IF NOT EXISTS floworder
 USE floworder;
 
 DROP TABLE IF EXISTS fo_order_status_log;
+DROP TABLE IF EXISTS fo_recovery_action_log;
 DROP TABLE IF EXISTS fo_mq_dead_letter;
 DROP TABLE IF EXISTS fo_mq_consume_log;
 DROP TABLE IF EXISTS fo_mq_outbox;
@@ -194,6 +195,25 @@ CREATE TABLE fo_mq_outbox (
         (status, claim_until)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     COMMENT='MQ事务Outbox表';
+
+CREATE TABLE fo_recovery_action_log (
+   id BIGINT NOT NULL PRIMARY KEY,
+   action_request_id VARCHAR(128) NOT NULL COMMENT '恢复动作幂等号',
+   action_type VARCHAR(64) NOT NULL COMMENT '动作类型：REPLAY/IGNORE/CHECK等',
+   target_type VARCHAR(64) NOT NULL COMMENT '目标类型：DEAD_LETTER/RESERVATION等',
+   target_key VARCHAR(128) NOT NULL COMMENT '目标主键或业务键',
+   status TINYINT NOT NULL DEFAULT 0 COMMENT '0已预览 10执行中 20成功 30失败',
+   operator VARCHAR(64) DEFAULT NULL COMMENT '操作人',
+   reason VARCHAR(512) DEFAULT NULL COMMENT '操作原因',
+   preview_result TEXT DEFAULT NULL COMMENT '预览结果快照',
+   execute_result TEXT DEFAULT NULL COMMENT '执行结果快照',
+   last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后错误',
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+   UNIQUE KEY uk_action_request_id (action_request_id),
+   KEY idx_target (target_type, target_key),
+   KEY idx_status_created (status, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='恢复动作审计日志';
 
 CREATE TABLE fo_mq_consume_log (
     id BIGINT NOT NULL PRIMARY KEY,
