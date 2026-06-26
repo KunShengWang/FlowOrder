@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS fo_mq_consume_log;
 DROP TABLE IF EXISTS fo_mq_outbox;
 DROP TABLE IF EXISTS fo_stock_deduct_record;
 DROP TABLE IF EXISTS fo_reservation_order;
+DROP TABLE IF EXISTS fo_reservation_request;
 DROP TABLE IF EXISTS fo_user_reservation_quota;
 DROP TABLE IF EXISTS fo_stock_item;
 DROP TABLE IF EXISTS fo_resource;
@@ -64,6 +65,31 @@ CREATE TABLE fo_user_reservation_quota (
    UNIQUE KEY uk_stock_item_user (stock_item_id, user_id),
    KEY idx_resource_user_status (resource_id, user_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户预约资格与额度表';
+
+CREATE TABLE fo_reservation_request (
+    id BIGINT NOT NULL PRIMARY KEY,
+    request_id VARCHAR(128) NOT NULL,
+    trace_id VARCHAR(64) DEFAULT NULL,
+    user_id BIGINT NOT NULL,
+    resource_id BIGINT NOT NULL,
+    stock_item_id BIGINT NOT NULL,
+    quantity INT NOT NULL,
+    order_no VARCHAR(64) DEFAULT NULL,
+    status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 10处理中 20成功 30待重试 40失败 50人工审核',
+    retry_count INT NOT NULL DEFAULT 0,
+    next_retry_time DATETIME DEFAULT NULL,
+    claim_owner VARCHAR(64) DEFAULT NULL,
+    claim_until DATETIME DEFAULT NULL,
+    last_error VARCHAR(1024) DEFAULT NULL,
+    started_at DATETIME DEFAULT NULL,
+    finished_at DATETIME DEFAULT NULL,
+    version INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_request_id (request_id),
+    KEY idx_status_retry (status, next_retry_time),
+    KEY idx_status_claim (status, claim_until)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='V8持久化预约请求表';
 
 CREATE TABLE fo_reservation_order (
     id BIGINT NOT NULL PRIMARY KEY,
@@ -215,3 +241,4 @@ CREATE TABLE fo_mq_dead_letter (
    KEY idx_status_created (status, created_at),
    KEY idx_biz_key (biz_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MQ消费死信处理记录';
+

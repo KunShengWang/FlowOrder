@@ -77,7 +77,12 @@ floworder:
     order-state-consumer:
       core-size: 1
       max-size: 2
-
+    v8-dispatch:
+      size: 1
+    v8-validation:
+      core-size: 2
+      max-size: 4
+      queue-capacity: 100
   rabbit:
     order-result:
       concurrent-consumers: 2
@@ -87,6 +92,17 @@ floworder:
       concurrent-consumers: 1
       max-concurrent-consumers: 2
       prefetch: 5
+  v8:
+    enabled: true
+    scan-delay-ms: 200
+    batch-size: 50
+    lease-seconds: 30
+    max-retry: 3
+    retry-delay-seconds: 2
+    worker:
+      core-size: 4
+      max-size: 8
+      queue-capacity: 100
 
 #feign:
 #  sentinel:

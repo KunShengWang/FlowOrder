@@ -32,14 +32,9 @@ public class ReservationAdmissionServiceImpl implements ReservationAdmissionServ
     @Override
     public void check(ResourceOrderCreateDto dto) {
         LocalDateTime now = LocalDateTime.now();
-        StockItemEntity stockItem = stockItemMapper.selectById(dto.getStockItemId());
-        validateStockItem(dto, stockItem, now);
-        UserReservationQuotaEntity quota = quotaMapper.selectOne(
-                Wrappers.<UserReservationQuotaEntity>lambdaQuery()
-                        .eq(UserReservationQuotaEntity::getStockItemId, dto.getStockItemId())
-                        .eq(UserReservationQuotaEntity::getUserId, dto.getUserId())
-        );
-        validateQuota(dto, quota, now);
+
+        checkStockItem(dto, now);
+        checkQuota(dto, now);
     }
 
     @Override
@@ -71,6 +66,44 @@ public class ReservationAdmissionServiceImpl implements ReservationAdmissionServ
              */
             throw new IllegalStateException("用户预约额度归还失败");
         }
+    }
+
+    @Override
+    public void checkStockItem(
+            ResourceOrderCreateDto dto,
+            LocalDateTime now
+    ) {
+        StockItemEntity stockItem =
+                stockItemMapper.selectById(
+                        dto.getStockItemId()
+                );
+
+        validateStockItem(dto, stockItem, now);
+    }
+
+    @Override
+    public void checkQuota(
+            ResourceOrderCreateDto dto,
+            LocalDateTime now
+    ) {
+        UserReservationQuotaEntity quota =
+                quotaMapper.selectOne(
+                        Wrappers
+                                .<UserReservationQuotaEntity>
+                                        lambdaQuery()
+                                .eq(
+                                        UserReservationQuotaEntity
+                                                ::getStockItemId,
+                                        dto.getStockItemId()
+                                )
+                                .eq(
+                                        UserReservationQuotaEntity
+                                                ::getUserId,
+                                        dto.getUserId()
+                                )
+                );
+
+        validateQuota(dto, quota, now);
     }
 
     private void validateStockItem(

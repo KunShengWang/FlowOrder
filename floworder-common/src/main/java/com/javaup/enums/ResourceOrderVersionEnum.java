@@ -9,7 +9,9 @@ public enum ResourceOrderVersionEnum {
 
     V2_VERSION("v2","v2购买策略版本",2),
 
-    V3_VERSION("v3", "RabbitMQ异步下单", 3);
+    V3_VERSION("v3", "RabbitMQ异步下单", 3),
+
+    V8_VERSION("v8", "持久化异步预约", 8);
 
     private final String version;
 

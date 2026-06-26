@@ -18,9 +18,9 @@ public class OrderRabbitListenerConfig {
             @Value("${floworder.thread-pool.order-create-consumer.max-size:4}") int maxSize) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("order-create-consumer-");
-        executor.setCorePoolSize(coreSize);
+        executor.setCorePoolSize(maxSize);
         executor.setMaxPoolSize(maxSize);
-        executor.setQueueCapacity(100);
+        executor.setQueueCapacity(0);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(10);
         executor.initialize();

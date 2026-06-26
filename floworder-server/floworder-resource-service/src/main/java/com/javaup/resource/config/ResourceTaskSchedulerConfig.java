@@ -29,6 +29,14 @@ public class ResourceTaskSchedulerConfig {
         return buildScheduler("dead-letter-monitor-", poolSize);
     }
 
+    @Bean(name = "v8RequestTaskScheduler", destroyMethod = "shutdown")
+    public ThreadPoolTaskScheduler v8RequestTaskScheduler(
+            @Value("${floworder.thread-pool.v8-dispatch.size:1}")
+            int poolSize
+    ) {
+        return buildScheduler("v8-request-dispatch-", poolSize);
+    }
+
     private ThreadPoolTaskScheduler buildScheduler(String threadNamePrefix, int poolSize) {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
         scheduler.setPoolSize(poolSize);// 1个调度线程

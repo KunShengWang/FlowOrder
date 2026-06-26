@@ -21,4 +21,8 @@ public interface ReservationAdmissionService {
      * 明确失败、取消或超时时归还额度。
      */
     void releaseQuota(StockDeductRecordEntity record);
+
+    void checkStockItem(ResourceOrderCreateDto dto, LocalDateTime now);
+
+    void checkQuota(ResourceOrderCreateDto dto, LocalDateTime now);
 }

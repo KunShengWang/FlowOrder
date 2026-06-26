@@ -3,6 +3,7 @@ package com.javaup.resource.controller;
 import com.javaup.common.ApiResponse;
 import com.javaup.dto.ResourceOrderCreateDto;
 import com.javaup.enums.ResourceOrderVersionEnum;
+import com.javaup.resource.service.ReservationRequestService;
 import com.javaup.resource.service.strategy.ResourceOrderContext;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,6 +14,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 
 import static com.javaup.trace.TraceConstant.REQUEST_ID;
+import com.javaup.dto.ReservationRequestResultDto;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 
 @Slf4j
 @RestController
@@ -21,6 +25,9 @@ public class ResourceOrderController {
 
     @Resource
     private ResourceOrderContext context;
+
+    @Resource
+    private ReservationRequestService reservationRequestService;
 
     @PostMapping("/create/v1")
     public ApiResponse<String> createOrderV1(@RequestBody ResourceOrderCreateDto createDto) {
@@ -35,6 +42,17 @@ public class ResourceOrderController {
     @PostMapping("/create/v3")
     public ApiResponse<String> createOrderV3(@RequestBody ResourceOrderCreateDto createDto) {
         return create(createDto, ResourceOrderVersionEnum.V3_VERSION);
+    }
+
+    @PostMapping("/create/v8")
+    public ApiResponse<String> createOrderV8(@RequestBody ResourceOrderCreateDto createDto) {
+        return create(createDto, ResourceOrderVersionEnum.V8_VERSION);
+    }
+
+    @GetMapping("/request/{requestId}")
+    public ApiResponse<ReservationRequestResultDto>
+    getReservationRequest(@PathVariable("requestId") String requestId) {
+        return ApiResponse.success(reservationRequestService.getResult(requestId));
     }
 
     private ApiResponse<String> create(ResourceOrderCreateDto createDto, ResourceOrderVersionEnum version) {
