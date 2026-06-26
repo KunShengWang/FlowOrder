@@ -1,0 +1,2062 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "FlowOrder API",
+    "description": "FlowOrder 高并发预约交易与履约一致性平台接口集合。主业务接口优先走 gateway 8088；internal/recovery 和 internal/mq 接口用于本地恢复验证，默认需要 floworder.admin.enabled=true。",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8088",
+      "description": "Gateway - 主业务入口"
+    },
+    {
+      "url": "http://127.0.0.1:8081",
+      "description": "resource-service 直连 - recovery/resource admin"
+    },
+    {
+      "url": "http://127.0.0.1:8082",
+      "description": "order-service 直连 - order admin"
+    },
+    {
+      "url": "http://127.0.0.1:8720",
+      "description": "Sentinel transport 示例端口"
+    }
+  ],
+  "tags": [
+    {
+      "name": "预约",
+      "description": "预约创建与请求查询"
+    },
+    {
+      "name": "订单",
+      "description": "订单创建、查询、确认、取消"
+    },
+    {
+      "name": "恢复控制面",
+      "description": "V10 preview/execute 恢复接口"
+    },
+    {
+      "name": "MQ 管理",
+      "description": "消费死信管理"
+    },
+    {
+      "name": "Outbox 管理",
+      "description": "Outbox 恢复管理"
+    },
+    {
+      "name": "运维观察",
+      "description": "Actuator 运维观察"
+    },
+    {
+      "name": "Sentinel",
+      "description": "Sentinel 规则与资源观察"
+    }
+  ],
+  "paths": {
+    "/api/reservation/create/v1": {
+      "post": {
+        "summary": "V1 同步分布式锁下单（历史对照）",
+        "description": "通过 gateway 8088 调用 resource-service。V8 返回 requestId，后续通过查询接口查看异步处理结果。",
+        "tags": [
+          "预约"
+        ],
+        "parameters": [
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "trace-v1-001"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v1-api-001"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceOrderCreateRequest"
+              },
+              "example": {
+                "userId": 1001,
+                "resourceId": 1,
+                "stockItemId": 1,
+                "quantity": 1,
+                "requestId": "v1-api-001"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reservation/create/v2": {
+      "post": {
+        "summary": "V2 Redis Lua + MySQL 条件更新同步下单",
+        "description": "通过 gateway 8088 调用 resource-service。V8 返回 requestId，后续通过查询接口查看异步处理结果。",
+        "tags": [
+          "预约"
+        ],
+        "parameters": [
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "trace-v2-001"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v2-api-001"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceOrderCreateRequest"
+              },
+              "example": {
+                "userId": 1001,
+                "resourceId": 1,
+                "stockItemId": 1,
+                "quantity": 1,
+                "requestId": "v2-api-001"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reservation/create/v3": {
+      "post": {
+        "summary": "V3 RabbitMQ 异步下单",
+        "description": "通过 gateway 8088 调用 resource-service。V8 返回 requestId，后续通过查询接口查看异步处理结果。",
+        "tags": [
+          "预约"
+        ],
+        "parameters": [
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "trace-v3-001"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v3-api-001"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceOrderCreateRequest"
+              },
+              "example": {
+                "userId": 1001,
+                "resourceId": 1,
+                "stockItemId": 1,
+                "quantity": 1,
+                "requestId": "v3-api-001"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reservation/create/v8": {
+      "post": {
+        "summary": "V8 持久化异步预约请求",
+        "description": "通过 gateway 8088 调用 resource-service。V8 返回 requestId，后续通过查询接口查看异步处理结果。",
+        "tags": [
+          "预约"
+        ],
+        "parameters": [
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "trace-v8-001"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v8-api-001"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceOrderCreateRequest"
+              },
+              "example": {
+                "userId": 1001,
+                "resourceId": 1,
+                "stockItemId": 1,
+                "quantity": 1,
+                "requestId": "v8-api-001"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/reservation/request/{requestId}": {
+      "get": {
+        "summary": "查询 V8/V9 预约请求处理结果",
+        "description": "",
+        "tags": [
+          "预约"
+        ],
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v12-confirm-164232"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ReservationRequestResult"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/order/create": {
+      "post": {
+        "summary": "直接创建订单（调试/内部验证）",
+        "description": "通常由 MQ 消费者触发，手工调试时可通过 gateway 调用。",
+        "tags": [
+          "订单"
+        ],
+        "parameters": [
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "trace-order-001"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "debug-order-001"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrderRequest"
+              },
+              "example": {
+                "orderNo": "FO20260626164235285d9b208ae",
+                "userId": 1001,
+                "resourceId": 1,
+                "stockItemId": 1,
+                "quantity": 1,
+                "requestId": "debug-order-001",
+                "deductNo": "FD20260626164235285de4dea54"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/order/query": {
+      "get": {
+        "summary": "按 requestId 查询订单是否存在",
+        "description": "",
+        "tags": [
+          "订单"
+        ],
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v12-confirm-164232"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OrderQueryResult"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/order/confirm": {
+      "post": {
+        "summary": "确认订单并触发库存转 SOLD",
+        "description": "",
+        "tags": [
+          "订单"
+        ],
+        "parameters": [
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "trace-confirm-001"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v12-confirm-164232"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderConfirmRequest"
+              },
+              "example": {
+                "orderNo": "FO20260626164235285d9b208ae",
+                "userId": 1001
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/order/cancel": {
+      "post": {
+        "summary": "取消订单并触发库存/额度释放",
+        "description": "",
+        "tags": [
+          "订单"
+        ],
+        "parameters": [
+          {
+            "name": "X-Trace-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "trace-cancel-001"
+          },
+          {
+            "name": "X-Request-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v12-cancel-164232"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderCancelRequest"
+              },
+              "example": {
+                "orderNo": "FO20260626164252114deca6d70",
+                "userId": 1001,
+                "reason": "apifox cancel verify"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/order/detail": {
+      "get": {
+        "summary": "查询订单状态详情",
+        "description": "",
+        "tags": [
+          "订单"
+        ],
+        "parameters": [
+          {
+            "name": "orderNo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "FO20260626164235285d9b208ae"
+          },
+          {
+            "name": "userId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 1001
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OrderStateDetail"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/recovery/reservation/check": {
+      "get": {
+        "summary": "V10 预约链路核对",
+        "description": "直连 resource-service 8081。需要 floworder.admin.enabled=true。",
+        "tags": [
+          "恢复控制面"
+        ],
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "v12-confirm-164232"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ReservationRecoveryCheckResult"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/recovery/dead-letter/preview": {
+      "post": {
+        "summary": "V10 死信恢复预览",
+        "description": "只预览并写审计日志，不执行恢复动作。直连 resource-service 8081。",
+        "tags": [
+          "恢复控制面"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/RecoveryPreviewResult"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryDeadLetterRequest"
+              },
+              "example": {
+                "actionRequestId": "v10-preview-001",
+                "deadLetterId": 2070417281797263362,
+                "actionType": "REPLAY",
+                "operator": "admin",
+                "reason": "preview before replay",
+                "force": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/recovery/dead-letter/execute": {
+      "post": {
+        "summary": "V10 死信恢复执行",
+        "description": "会调用 replay/ignore，需谨慎。建议先 preview。直连 resource-service 8081。",
+        "tags": [
+          "恢复控制面"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/RecoveryExecuteResult"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryDeadLetterRequest"
+              },
+              "example": {
+                "actionRequestId": "v10-execute-001",
+                "deadLetterId": 2070417281797263362,
+                "actionType": "REPLAY",
+                "operator": "admin",
+                "reason": "manual replay after check",
+                "force": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/dead-letter": {
+      "get": {
+        "summary": "查询消费死信列表",
+        "description": "直连 resource-service 8081，需要 floworder.admin.enabled=true。",
+        "tags": [
+          "MQ 管理"
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 0
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100
+            },
+            "example": 100
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MqDeadLetterAdmin"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/dead-letter/{id}": {
+      "get": {
+        "summary": "查询消费死信详情",
+        "description": "",
+        "tags": [
+          "MQ 管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 2070417281797263362
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MqDeadLetterAdmin"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/dead-letter/{id}/replay": {
+      "post": {
+        "summary": "直接重放消费死信（优先使用 V10 recovery execute）",
+        "description": "",
+        "tags": [
+          "MQ 管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 2070417281797263362
+          },
+          {
+            "name": "operator",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "admin"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/dead-letter/{id}/ignore": {
+      "post": {
+        "summary": "直接忽略消费死信（优先使用 V10 recovery execute）",
+        "description": "",
+        "tags": [
+          "MQ 管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "example": 2070417281797263362
+          },
+          {
+            "name": "operator",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "admin"
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "business converged"
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "example": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/outbox/dead": {
+      "get": {
+        "summary": "查询 DEAD Outbox 列表",
+        "description": "resource-service 8081 和 order-service 8082 均有同名管理接口，按需要切换 server。",
+        "tags": [
+          "Outbox 管理"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100
+            },
+            "example": 100
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MqOutboxAdmin"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/outbox/dead/{messageId}/retry": {
+      "post": {
+        "summary": "将 DEAD Outbox 恢复为可重试",
+        "description": "",
+        "tags": [
+          "Outbox 管理"
+        ],
+        "parameters": [
+          {
+            "name": "messageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "message-id-demo"
+          },
+          {
+            "name": "operator",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "admin"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/outbox/sent/{messageId}/replay": {
+      "post": {
+        "summary": "重放已发送 Outbox 消息",
+        "description": "",
+        "tags": [
+          "Outbox 管理"
+        ],
+        "parameters": [
+          {
+            "name": "messageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "message-id-demo"
+          },
+          {
+            "name": "operator",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "admin"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/mq/outbox/consumer-dead/{messageId}/replay": {
+      "post": {
+        "summary": "消费死信场景下恢复原 Outbox 重放",
+        "description": "",
+        "tags": [
+          "Outbox 管理"
+        ],
+        "parameters": [
+          {
+            "name": "messageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "message-id-demo"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actuator/health": {
+      "get": {
+        "summary": "Actuator 健康检查",
+        "description": "按 gateway/resource/order 实际端口切换 server。",
+        "tags": [
+          "运维观察"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actuator/metrics": {
+      "get": {
+        "summary": "Actuator 指标列表",
+        "description": "按 gateway/resource/order 实际端口切换 server。",
+        "tags": [
+          "运维观察"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actuator/metrics/jvm.memory.used": {
+      "get": {
+        "summary": "JVM 内存指标",
+        "description": "按 gateway/resource/order 实际端口切换 server。",
+        "tags": [
+          "运维观察"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actuator/metrics/http.server.requests": {
+      "get": {
+        "summary": "HTTP 请求指标",
+        "description": "按 gateway/resource/order 实际端口切换 server。",
+        "tags": [
+          "运维观察"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actuator/threaddump": {
+      "get": {
+        "summary": "线程 Dump",
+        "description": "按 gateway/resource/order 实际端口切换 server。",
+        "tags": [
+          "运维观察"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getRules": {
+      "get": {
+        "summary": "Sentinel 当前规则",
+        "description": "直连 Sentinel transport 端口，按实际端口访问。",
+        "tags": [
+          "Sentinel"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cnode": {
+      "get": {
+        "summary": "Sentinel 资源统计节点",
+        "description": "直连 Sentinel transport 端口，按实际端口访问。",
+        "tags": [
+          "Sentinel"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gateway/getRules": {
+      "get": {
+        "summary": "Gateway Sentinel 规则",
+        "description": "直连 Sentinel transport 端口，按实际端口访问。",
+        "tags": [
+          "Sentinel"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gateway/getApiDefinitions": {
+      "get": {
+        "summary": "Gateway API 分组定义",
+        "description": "直连 Sentinel transport 端口，按实际端口访问。",
+        "tags": [
+          "Sentinel"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ResourceOrderCreateRequest": {
+        "type": "object",
+        "required": [
+          "userId",
+          "resourceId",
+          "stockItemId",
+          "quantity",
+          "requestId"
+        ],
+        "properties": {
+          "userId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1001
+          },
+          "resourceId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1
+          },
+          "stockItemId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1
+          },
+          "quantity": {
+            "type": "integer",
+            "example": 1
+          },
+          "requestId": {
+            "type": "string",
+            "example": "v8-api-001"
+          }
+        }
+      },
+      "CreateOrderRequest": {
+        "type": "object",
+        "properties": {
+          "orderNo": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resourceId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stockItemId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "deductNo": {
+            "type": "string"
+          },
+          "expireTime": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OrderConfirmRequest": {
+        "type": "object",
+        "required": [
+          "orderNo",
+          "userId"
+        ],
+        "properties": {
+          "orderNo": {
+            "type": "string",
+            "example": "FO20260626164235285d9b208ae"
+          },
+          "userId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1001
+          }
+        }
+      },
+      "OrderCancelRequest": {
+        "type": "object",
+        "required": [
+          "orderNo",
+          "userId"
+        ],
+        "properties": {
+          "orderNo": {
+            "type": "string",
+            "example": "FO20260626164252114deca6d70"
+          },
+          "userId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1001
+          },
+          "reason": {
+            "type": "string",
+            "example": "apifox cancel verify"
+          }
+        }
+      },
+      "ReservationRequestResult": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "description": "0待处理 10处理中 20成功 30待重试 40失败 50人工确认"
+          },
+          "orderNo": {
+            "type": "string"
+          },
+          "orderStatus": {
+            "type": "integer",
+            "description": "10已预约 20已确认 30已取消 40已超时"
+          },
+          "latestOrderEventType": {
+            "type": "string"
+          },
+          "latestOrderEventTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "orderEventVersion": {
+            "type": "integer"
+          },
+          "retryCount": {
+            "type": "integer"
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OrderQueryResult": {
+        "type": "object",
+        "properties": {
+          "exists": {
+            "type": "boolean"
+          },
+          "orderNo": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          }
+        }
+      },
+      "OrderStateDetail": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "orderNo": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "confirmedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "canceledAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cancelReason": {
+            "type": "string"
+          }
+        }
+      },
+      "RecoveryDeadLetterRequest": {
+        "type": "object",
+        "required": [
+          "actionRequestId",
+          "deadLetterId",
+          "actionType",
+          "operator"
+        ],
+        "properties": {
+          "actionRequestId": {
+            "type": "string",
+            "example": "v10-preview-001"
+          },
+          "deadLetterId": {
+            "type": "integer",
+            "format": "int64",
+            "example": 2070417281797263362
+          },
+          "actionType": {
+            "type": "string",
+            "enum": [
+              "REPLAY",
+              "IGNORE"
+            ],
+            "example": "REPLAY"
+          },
+          "operator": {
+            "type": "string",
+            "example": "admin"
+          },
+          "reason": {
+            "type": "string",
+            "example": "preview before replay"
+          },
+          "force": {
+            "type": "boolean",
+            "example": false
+          }
+        }
+      },
+      "RecoveryPreviewResult": {
+        "type": "object",
+        "properties": {
+          "actionRequestId": {
+            "type": "string"
+          },
+          "actionType": {
+            "type": "string"
+          },
+          "targetType": {
+            "type": "string"
+          },
+          "targetKey": {
+            "type": "string"
+          },
+          "canExecute": {
+            "type": "boolean"
+          },
+          "currentStatus": {
+            "type": "integer"
+          },
+          "recommendedAction": {
+            "type": "string"
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deadLetter": {
+            "$ref": "#/components/schemas/MqDeadLetterAdmin"
+          }
+        }
+      },
+      "RecoveryExecuteResult": {
+        "type": "object",
+        "properties": {
+          "actionRequestId": {
+            "type": "string"
+          },
+          "actionType": {
+            "type": "string"
+          },
+          "targetType": {
+            "type": "string"
+          },
+          "targetKey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "executedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ReservationRecoveryCheckResult": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "reservationRequest": {
+            "$ref": "#/components/schemas/ReservationRequestResult"
+          },
+          "deductRecord": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderQueryResult"
+          },
+          "orderQueryError": {
+            "type": "string"
+          },
+          "stockItem": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "quota": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "inventoryDiff": {
+            "type": "integer"
+          },
+          "inventoryInvariantOk": {
+            "type": "boolean"
+          },
+          "resourceOutboxes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "unresolvedDeadLetterCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "MqDeadLetterAdmin": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "deadQueue": {
+            "type": "string"
+          },
+          "producerService": {
+            "type": "string"
+          },
+          "messageType": {
+            "type": "string"
+          },
+          "bizKey": {
+            "type": "string"
+          },
+          "exchangeName": {
+            "type": "string"
+          },
+          "routingKey": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "deathReason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "description": "0待处理 10重放中 20已解决 30已忽略"
+          },
+          "replayCount": {
+            "type": "integer"
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "replayedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "handledBy": {
+            "type": "string"
+          },
+          "resolutionNote": {
+            "type": "string"
+          }
+        }
+      },
+      "MqOutboxAdmin": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string"
+          },
+          "producerService": {
+            "type": "string"
+          },
+          "bizKey": {
+            "type": "string"
+          },
+          "messageType": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "description": "0 NEW 10 SENDING 20 SENT 30 RETRY 40 DEAD"
+          },
+          "retryCount": {
+            "type": "integer"
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "nextRetryTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  }
+}
