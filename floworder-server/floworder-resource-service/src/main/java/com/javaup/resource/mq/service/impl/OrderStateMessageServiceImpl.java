@@ -10,6 +10,7 @@ import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.mq.service.OrderStateMessageService;
 import com.javaup.resource.service.ReservationAdmissionService;
+import com.javaup.resource.service.ReservationRequestService;
 import jakarta.annotation.Resource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -38,6 +39,9 @@ public class OrderStateMessageServiceImpl implements OrderStateMessageService {
     @Resource
     private ReservationAdmissionService reservationAdmissionService;
 
+    @Resource
+    private ReservationRequestService reservationRequestService;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long handle(OrderStateChangedMessage message) {
@@ -58,6 +62,15 @@ public class OrderStateMessageServiceImpl implements OrderStateMessageService {
         } else {
             throw new IllegalArgumentException("不支持的订单状态事件");
         }
+
+        reservationRequestService.markOrderStateChanged(
+                message.getRequestId(),
+                message.getOrderNo(),
+                message.getFromStatus(),
+                message.getToStatus(),
+                message.getEventType(),
+                message.getOccurredAt()
+        );
 
         markConsumed(log.getId());
         return releaseEvent ? record.getStockItemId() : null;

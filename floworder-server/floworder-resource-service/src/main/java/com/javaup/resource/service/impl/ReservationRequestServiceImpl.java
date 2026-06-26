@@ -97,6 +97,36 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
     }
 
     @Override
+    public void markOrderStateChanged(
+            String requestId,
+            String orderNo,
+            Integer fromStatus,
+            Integer toStatus,
+            String eventType,
+            LocalDateTime occurredAt
+    ) {
+        if (!StringUtils.hasText(requestId)
+                || !StringUtils.hasText(orderNo)
+                || fromStatus == null
+                || toStatus == null
+                || !StringUtils.hasText(eventType)) {
+            return;
+        }
+        int rows = requestMapper.markOrderStateChanged(
+                requestId,
+                orderNo,
+                fromStatus,
+                toStatus,
+                eventType,
+                occurredAt,
+                LocalDateTime.now()
+        );
+        if (rows != 1) {
+            throw new IllegalStateException("预约请求订单状态更新失败");
+        }
+    }
+
+    @Override
     public void markFailed(
             Long id,
             String owner,
@@ -155,6 +185,10 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
         result.setRequestId(request.getRequestId());
         result.setStatus(request.getStatus());
         result.setOrderNo(request.getOrderNo());
+        result.setOrderStatus(request.getOrderStatus());
+        result.setLatestOrderEventType(request.getLatestOrderEventType());
+        result.setLatestOrderEventTime(request.getLatestOrderEventTime());
+        result.setOrderEventVersion(request.getOrderEventVersion());
         result.setRetryCount(request.getRetryCount());
         result.setLastError(request.getLastError());
         result.setCreatedAt(request.getCreatedAt());
@@ -180,6 +214,7 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
         request.setStockItemId(dto.getStockItemId());
         request.setQuantity(dto.getQuantity());
         request.setStatus(ReservationRequestStatusEnum.PENDING.getStatus());
+        request.setOrderEventVersion(0);
         request.setRetryCount(0);
         request.setNextRetryTime(now);
         request.setVersion(0);

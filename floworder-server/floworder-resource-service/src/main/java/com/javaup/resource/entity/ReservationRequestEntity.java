@@ -24,6 +24,10 @@ public class ReservationRequestEntity {
 
     private String orderNo;
     private Integer status;
+    private Integer orderStatus;
+    private String latestOrderEventType;
+    private LocalDateTime latestOrderEventTime;
+    private Integer orderEventVersion;
 
     private Integer retryCount;
     private LocalDateTime nextRetryTime;

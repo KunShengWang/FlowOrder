@@ -17,6 +17,15 @@ public interface ReservationRequestService {
 
     void markSucceeded(Long id, String owner, String orderNo);
 
+    void markOrderStateChanged(
+            String requestId,
+            String orderNo,
+            Integer fromStatus,
+            Integer toStatus,
+            String eventType,
+            LocalDateTime occurredAt
+    );
+
     void markRetry(Long id, String owner, LocalDateTime nextRetryTime, String error);
 
     void markFailed(Long id, String owner, String error);

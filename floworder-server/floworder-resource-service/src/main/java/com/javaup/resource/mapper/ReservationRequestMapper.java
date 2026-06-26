@@ -50,6 +50,7 @@ public interface ReservationRequestMapper
             UPDATE fo_reservation_request
             SET status = 20,
                 order_no = #{orderNo},
+                order_status = 10,
                 claim_owner = NULL,
                 claim_until = NULL,
                 last_error = NULL,
@@ -63,6 +64,32 @@ public interface ReservationRequestMapper
             @Param("id") Long id,
             @Param("owner") String owner,
             @Param("orderNo") String orderNo,
+            @Param("now") LocalDateTime now
+    );
+
+    @Update("""
+            UPDATE fo_reservation_request
+            SET order_status = #{toStatus},
+                latest_order_event_type = #{eventType},
+                latest_order_event_time = COALESCE(#{occurredAt}, #{now}),
+                order_event_version = order_event_version + 1,
+                finished_at = CASE
+                    WHEN finished_at IS NULL THEN #{now}
+                    ELSE finished_at
+                END,
+                version = version + 1
+            WHERE request_id = #{requestId}
+              AND order_no = #{orderNo}
+              AND status = 20
+              AND (order_status IS NULL OR order_status = #{fromStatus})
+            """)
+    int markOrderStateChanged(
+            @Param("requestId") String requestId,
+            @Param("orderNo") String orderNo,
+            @Param("fromStatus") Integer fromStatus,
+            @Param("toStatus") Integer toStatus,
+            @Param("eventType") String eventType,
+            @Param("occurredAt") LocalDateTime occurredAt,
             @Param("now") LocalDateTime now
     );
 

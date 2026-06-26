@@ -76,6 +76,10 @@ CREATE TABLE fo_reservation_request (
     quantity INT NOT NULL,
     order_no VARCHAR(64) DEFAULT NULL,
     status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 10处理中 20成功 30待重试 40失败 50人工审核',
+    order_status TINYINT DEFAULT NULL COMMENT '订单履约状态：10已预约 20已确认 30已取消 40已超时',
+    latest_order_event_type VARCHAR(64) DEFAULT NULL COMMENT '最后一次已处理订单状态事件',
+    latest_order_event_time DATETIME DEFAULT NULL COMMENT '最后一次已处理订单状态事件发生时间',
+    order_event_version INT NOT NULL DEFAULT 0 COMMENT '订单状态事件本地递增版本',
     retry_count INT NOT NULL DEFAULT 0,
     next_retry_time DATETIME DEFAULT NULL,
     claim_owner VARCHAR(64) DEFAULT NULL,
@@ -88,7 +92,8 @@ CREATE TABLE fo_reservation_request (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_request_id (request_id),
     KEY idx_status_retry (status, next_retry_time),
-    KEY idx_status_claim (status, claim_until)
+    KEY idx_status_claim (status, claim_until),
+    KEY idx_order_status (order_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='V8持久化预约请求表';
 
 CREATE TABLE fo_reservation_order (

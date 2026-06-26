@@ -13,6 +13,14 @@ public class ReservationRequestResultDto {
 
     private String orderNo;
 
+    private Integer orderStatus;
+
+    private String latestOrderEventType;
+
+    private LocalDateTime latestOrderEventTime;
+
+    private Integer orderEventVersion;
+
     private Integer retryCount;
 
     private String lastError;
