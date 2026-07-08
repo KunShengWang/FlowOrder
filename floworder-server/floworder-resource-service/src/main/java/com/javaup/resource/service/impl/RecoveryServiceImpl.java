@@ -93,6 +93,14 @@ public class RecoveryServiceImpl implements RecoveryService {
     @Override
     public RecoveryExecuteResult executeDeadLetter(RecoveryDeadLetterRequest request) {
         validateDeadLetterRequest(request, true);
+        RecoveryActionLogEntity existing = findActionLog(request.getActionRequestId());
+        if (existing != null) {
+            ensureSameAction(existing, request);
+            if (Objects.equals(existing.getStatus(), ACTION_SUCCEEDED)) {
+                return idempotentSuccess(existing);
+            }
+        }
+
         RecoveryPreviewResult preview = buildDeadLetterPreview(request);
         if (!Boolean.TRUE.equals(preview.getCanExecute())) {
             throw new BizException("恢复动作当前不可执行：" + String.join(";", preview.getWarnings()));
