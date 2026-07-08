@@ -1,294 +1,311 @@
 # FlowOrder
-应对中大厂实习的高并发项目
 
+FlowOrder 是一个面向 Java 后端简历和面试的高并发预约交易与履约一致性平台。
 
-# FlowOrder 项目实施规格
+项目围绕“预约准入 -> 异步受理 -> 库存预扣 -> 可靠下单 -> 订单履约 -> 异常恢复”构建闭环，重点证明并发正确性、可靠消息、最终一致性、线程池治理、压测验证和故障恢复能力。
+
+> 当前状态：主体功能已收口，V7-lite / V8 / V9-lite / V10-core / V12 证据链已完成。后续不再扩普通业务模块，只做 bug 修复、事实修正和面试复盘。
 
 ## 项目定位
 
-FlowOrder 是一个高并发预约/订单/库存/任务履约平台，用来证明传统 Java 后端能力。
+FlowOrder 不是商城、运营后台、支付系统、Agent 项目或云原生平台。
 
-项目面向有限资源预约场景，例如服务名额、设备资源、执行窗口。用户抢预约后，系统完成库存扣减、订单状态流转、异步履约任务派发、超时关闭和最终一致性补偿。
+它聚焦一个高并发预约交易场景：
+
+```text
+用户提交预约
+-> 系统校验资源状态、预约窗口和用户额度
+-> 请求先持久化并异步处理
+-> Redis Lua + MySQL 条件更新完成库存预扣
+-> Outbox + RabbitMQ 异步创建订单
+-> 订单确认/取消/超时后驱动库存 SOLD/RELEASED
+-> 死信和异常通过恢复控制面 preview/execute 处理
+```
+
+核心目标不是堆接口数量，而是证明：
+
+- 高并发下不超卖、不负库存；
+- 相同 `requestId` 幂等且参数一致；
+- 跨服务订单创建最终一致；
+- MQ 消息可追踪、可重试、可恢复；
+- 订单确认、取消、超时均能驱动库存收敛；
+- 恢复动作可预览、可幂等、可审计；
+- 关键结论有 JMeter、SQL、日志和自动化测试证据。
 
 ## 技术栈
 
-- Java 21
-- Spring Boot 3.x
-- Spring Cloud Alibaba
-- MyBatis Plus
-- MySQL 8
-- Redis 7
+以当前 `pom.xml` 和配置为准：
+
+- Java 17
+- Spring Boot 3.5.14
+- Spring Cloud 2025.0.0
+- Spring Cloud Alibaba 2025.0.0.0
+- MyBatis Plus 3.5.15
+- MySQL
+- Redis
 - RabbitMQ
-- Redisson
+- Redisson 3.32.0
 - Nacos
 - Gateway
 - Sentinel
-- Docker Compose
+- Actuator
 - JMeter
 
-Kafka、K8s、复杂分库分表不进入第一版实现。
+当前没有实现或验证：Kafka、Seata、分库分表、Kubernetes、完整 Prometheus/Grafana 监控平台、多级缓存平台。
 
-## 核心模块
+## 模块说明
 
-### 用户与权限
+| 模块 | 说明 |
+| --- | --- |
+| `floworder-common` | 公共响应、异常、枚举、共享 DTO |
+| `floworder-server-client` | Feign 契约、跨服务 DTO、MQ 协议 |
+| `floworder-resource-service` | 预约入口、V7 准入、V8 异步请求、库存预扣、订单结果/状态消费、DLQ 与恢复控制面 |
+| `floworder-order-service` | 订单创建、订单查询、确认、取消、超时关闭、订单状态日志、订单侧 Outbox |
+| `floworder-gateway-service` | 统一入口、网关路由和基础限流 |
+| `floworder-service-initialize` | 组合校验基础设施 |
+| `floworder-redisson-framework` | Redisson 公共配置 |
+| `sql` | 表结构和基础数据 |
+| `jmeter` | 压测脚本与实验材料 |
+| `apifox` | OpenAPI / Apifox 接口集合 |
+| `docs` | 架构图、验证报告、简历与面试材料 |
 
-功能：
+## 当前核心链路
 
-- 用户注册、登录。
-- JWT 鉴权。
-- RBAC 权限模型。
-- 管理员、普通用户、运营人员三类角色。
+### 1. V7-lite：预约准入
 
-需要掌握：
+实现最小但必要的预约准入：
 
-- Spring Security 或轻量 JWT 鉴权。
-- 拦截器/过滤器区别。
-- RBAC 表设计。
+- 资源/库存项状态校验；
+- 预约窗口校验；
+- 用户资格和额度校验；
+- 并发限购；
+- 无效请求前置拦截。
 
-### 资源与库存
+正确性边界：额度和资源状态的事实来源是 MySQL，不能只依赖 Redis 或应用层先查后写。
 
-功能：
+### 2. V8：持久化异步预约引擎
 
-- 创建资源。
-- 配置预约窗口。
-- 配置库存/名额。
-- 查询可预约资源。
+V8 入口：
 
-核心表：
+```text
+POST /api/reservation/create/v8
+```
 
-- `resource`
-- `resource_slot`
-- `resource_inventory`
+核心设计：
 
-需要掌握：
+- 请求先写入 `fo_reservation_request`；
+- HTTP 快速返回 `requestId`；
+- 后台任务扫描待处理请求；
+- 使用 `claim_owner` / `claim_until` 做数据库租约抢占；
+- 使用有界线程池和显式队列处理请求；
+- 库存扣减、额度更新、预扣记录和 Outbox 写入仍在同一个事务边界内完成。
 
-- MySQL 表结构设计。
-- 联合索引。
-- 资源状态字段设计。
+JVM 队列只负责单实例调度；分布式正确性继续由数据库租约、唯一索引、Redis Lua、MySQL 条件更新和状态机保证。
 
-### 订单状态机
+### 3. 库存预扣：Redis Lua + MySQL 条件更新
 
-状态：
+库存不变量：
 
-- `INIT`
-- `RESERVED`
-- `CONFIRMED`
-- `FULFILLING`
-- `FINISHED`
-- `CANCELLED`
-- `TIMEOUT_CLOSED`
-- `FAILED`
+```text
+total_stock = available_stock + locked_stock + sold_stock
+```
 
-要求：
+核心机制：
 
-- 所有状态流转必须校验前置状态。
-- 状态变更记录进入订单流水表。
-- 取消、超时、失败都要考虑库存回滚。
+- Redis Lua 原子检查并扣减库存，快速失败；
+- MySQL 条件更新使用 `available_stock >= quantity` 作为最终防线；
+- `requestId` / `deductNo` 唯一索引防止重复扣减；
+- 明确业务失败时做补偿；
+- 数据库提交结果未知时避免盲目增加 Redis 库存，优先删除 key 后从 MySQL 重建。
 
-核心表：
+### 4. V3/V8 主链路：Outbox + RabbitMQ 可靠下单
 
-- `reservation_order`
-- `order_status_log`
+核心机制：
 
-需要掌握：
+- 业务数据和 Outbox 记录在同一本地事务提交；
+- 后台任务扫描 `NEW/RETRY` Outbox；
+- Publisher Confirm 成功后标记 `SENT`；
+- 发送失败退避重试，超过上限进入 `DEAD`；
+- 消费端使用 `messageId + consumerGroup` 幂等；
+- 消费成功后手动 ACK；
+- 多次失败进入 RabbitMQ DLQ，并落库到 `fo_mq_dead_letter`。
 
-- 状态机设计。
-- 乐观锁。
-- 事务边界。
+### 5. V9-lite：订单履约状态机
 
-### 高并发预约
+订单主状态：
 
-流程：
+| 状态 | 语义 |
+| --- | --- |
+| `10 RESERVED` | 已预约 |
+| `20 CONFIRMED` | 已确认 |
+| `30 CANCELLED` | 已取消 |
+| `40 TIMEOUT` | 已超时 |
+| `50 FAILED` | 创建失败 |
 
-1. 校验用户是否重复预约。
-2. 查询 Redis 库存。
-3. Lua 原子预扣库存。
-4. 创建订单。
-5. 发送 MQ 履约任务。
-6. 失败时补偿库存。
+状态事件驱动库存变化：
 
-要求：
+| 订单事件 | 库存预扣状态 | 库存字段变化 |
+| --- | --- | --- |
+| `ORDER_CONFIRMED` | `SOLD` | `locked_stock -> sold_stock` |
+| `ORDER_CANCELLED` | `RELEASED` | `locked_stock -> available_stock` |
+| `ORDER_TIMEOUT` | `RELEASED` | `locked_stock -> available_stock` |
 
-- Redis 预扣防超卖。
-- MySQL 唯一索引防重复预约。
-- 订单创建接口支持幂等。
-- JMeter 压测验证库存不为负。
+确认、取消、超时三条链路均已形成 SQL 和 MQ 证据。
 
-需要掌握：
+### 6. V10-core：恢复控制面
 
-- Redis Lua。
-- Redisson 分布式锁。
-- 缓存一致性。
-- 接口幂等。
+恢复接口默认不暴露：
 
-### MQ 异步履约
+```yaml
+floworder:
+  admin:
+    enabled: false
+```
 
-消息类型：
+临时开启后支持：
 
-- `ORDER_CREATED`
-- `ORDER_TIMEOUT_CLOSE`
-- `FULFILLMENT_TASK_CREATED`
-- `ORDER_COMPENSATE`
+```text
+POST /internal/recovery/dead-letter/preview
+POST /internal/recovery/dead-letter/execute
+GET  /internal/recovery/reservation/check?requestId=xxx
+```
 
-要求：
+设计原则：
 
-- 生产者确认。
-- 消费者手动确认。
-- 消息幂等表。
-- 死信队列。
-- 延迟队列处理超时关闭。
-- 失败重试和补偿。
+- `preview` 只判断可执行性和影响范围，不直接修改业务；
+- `execute` 必须携带 `actionRequestId`；
+- 相同 `actionRequestId` 成功后再次执行返回 `IDEMPOTENT_SUCCEEDED`；
+- 恢复动作写入 `fo_recovery_action_log`，记录 operator、reason、previewResult、executeResult；
+- recovery 不绕过领域服务直接修改订单和库存核心状态。
 
-核心表：
+## 已验证证据
 
-- `message_consume_log`
-- `fulfillment_task`
+### V8 JMeter 压测
 
-需要掌握：
+| 指标 | 结果 |
+| --- | ---: |
+| Samples | 900 |
+| Threads | 100 |
+| Loop | 9 |
+| Average | 16 ms |
+| Max | 213 ms |
+| Error % | 0.00% |
+| Throughput | 91.4/sec |
 
-- RabbitMQ ack/confirm。
-- 重复消费。
-- 死信队列。
-- 延迟队列。
-- 最终一致性。
+SQL 核对结论：
 
-### 稳定性与治理
+```text
+fo_reservation_request：900 条成功
+fo_reservation_order：900 条 RESERVED
+fo_stock_deduct_record：900 条 ORDER_CREATED
+fo_mq_outbox：创建命令和结果消息均 SENT
+库存恒等式 diff=0
+```
 
-功能：
+### V12 主链路证据
 
-- Sentinel 限流。
-- 接口降级。
-- 线程池隔离。
-- 超时控制。
-- 慢接口日志。
-- TraceId 贯穿请求、MQ、任务。
+| 场景 | 证据 |
+| --- | --- |
+| 确认成交 | `fo_reservation_order.status=20`，预扣记录 `SOLD`，库存 `locked -> sold`，`diff=0` |
+| 取消释放 | `fo_reservation_order.status=30`，预扣记录 `RELEASED`，库存 `locked -> available`，额度释放 |
+| 超时关闭 | `fo_reservation_order.status=40`，`ORDER_TIMEOUT` Outbox `SENT`，消费成功，库存和额度释放 |
+| V10 execute 幂等 | `RecoveryServiceImplTest` 验证第二次相同 `actionRequestId` 返回 `IDEMPOTENT_SUCCEEDED` |
 
-要求：
+## 文档入口
 
-- 高并发预约接口配置限流规则。
-- MQ 消费使用独立线程池。
-- 日志必须能追踪一次订单全链路。
+建议按以下顺序阅读：
 
-需要掌握：
+1. 架构和流程图  
+   [docs/architecture/floworder-architecture.md](docs/architecture/floworder-architecture.md)
 
-- ThreadPoolExecutor 参数。
-- 拒绝策略。
-- Sentinel 限流降级。
-- 日志链路追踪。
+2. V12 主链路证据  
+   [docs/reports/v12/01-main-flow-evidence.md](docs/reports/v12/01-main-flow-evidence.md)
 
-## API 清单
+3. V8 压测证据  
+   [docs/reports/v12/02-v8-jmeter-evidence.md](docs/reports/v12/02-v8-jmeter-evidence.md)
 
-用户：
+4. V10 恢复控制面证据  
+   [docs/reports/v12/03-recovery-evidence.md](docs/reports/v12/03-recovery-evidence.md)
 
-- `POST /api/auth/login`
-- `GET /api/users/me`
+5. 订单超时关闭证据  
+   [docs/reports/v12/04-timeout-close-evidence.md](docs/reports/v12/04-timeout-close-evidence.md)
 
-资源：
+6. 简历与面试最终稿  
+   [docs/resume/floworder-interview-guide.md](docs/resume/floworder-interview-guide.md)
 
-- `POST /api/resources`
-- `GET /api/resources`
-- `POST /api/resources/{id}/slots`
-- `POST /api/resources/{id}/inventory`
+7. Apifox / OpenAPI 接口集合  
+   [apifox/floworder.openapi.json](apifox/floworder.openapi.json)
 
-预约订单：
+早期 V8 实验过程记录仍保留在 `docs/reports/v8`，其中包含中间态问题和排查过程。判断最终项目状态时，以 `docs/reports/v12`、`docs/architecture`、`docs/resume` 和当前代码为准。
 
-- `POST /api/orders/reserve`
-- `GET /api/orders/{orderNo}`
-- `POST /api/orders/{orderNo}/cancel`
-- `POST /api/orders/{orderNo}/confirm`
+## 本地端口
 
-任务：
+| 服务 | 默认端口 |
+| --- | ---: |
+| gateway-service | 8088 |
+| resource-service | 8081 |
+| order-service | 8082 |
+| Nacos | 8848 |
+| RabbitMQ | 5672 |
 
-- `GET /api/tasks`
-- `POST /api/tasks/{id}/retry`
+主业务接口优先通过 Gateway：
 
-监控与演示：
+```text
+POST http://127.0.0.1:8088/api/reservation/create/v8
+GET  http://127.0.0.1:8088/api/reservation/request/{requestId}
+GET  http://127.0.0.1:8088/api/order/query?requestId=xxx
+POST http://127.0.0.1:8088/api/order/confirm
+POST http://127.0.0.1:8088/api/order/cancel
+```
 
-- `GET /api/demo/inventory/{slotId}`
-- `GET /api/demo/orders/{orderNo}/trace`
-- `GET /actuator/health`
+恢复控制接口为内部接口，默认关闭，必要时临时开启 `floworder.admin.enabled=true` 后直连 resource-service。
 
-## 表结构设计要点
+## 简历表达建议
 
-必须有：
+可写内容：
 
-- 用户表、角色表、用户角色表。
-- 资源表、预约窗口表、库存表。
-- 订单表、订单状态流水表。
-- 履约任务表。
-- 幂等请求表。
-- 消息消费日志表。
+```text
+FlowOrder：高并发预约交易与履约一致性平台
 
-关键索引：
+围绕预约准入、异步受理、库存预扣、订单履约和异常恢复，设计并实现预约交易一致性闭环。
+- 基于 Redis Lua + MySQL 条件更新 + 唯一索引实现库存预扣，保证并发下无超卖、无负库存和 requestId 幂等。
+- 基于 Outbox + RabbitMQ 构建异步下单链路，结合 Publisher Confirm、手动 ACK、消费幂等表和 DLQ 实现消息可追踪、可重试、可恢复。
+- 引入持久化预约请求表、claim_owner/claim_until 数据库租约和有界线程池实现 V8 异步预约处理；JMeter 100 并发、900 请求下 HTTP 错误率 0%，库存恒等式 diff=0。
+- 建立订单履约状态机，确认订单时 locked -> sold，取消/超时时 locked -> available，并通过 MQ 状态事件回写预约请求履约状态。
+- 设计 preview -> execute 恢复控制面，使用 actionRequestId 保证恢复动作幂等，并通过恢复审计日志记录 operator、reason 和执行结果。
+```
 
-- `reservation_order(order_no)` 唯一。
-- `reservation_order(user_id, slot_id)` 唯一，防重复预约。
-- `resource_inventory(slot_id)` 唯一。
-- `message_consume_log(message_id, consumer_group)` 唯一。
-- `order_status_log(order_no, created_at)` 普通索引。
+不要写成：
 
-## 参考项目阅读范围
+- 生产级高可用系统；
+- 完整运营后台；
+- 完整权限系统；
+- 多级缓存平台；
+- 分库分表系统；
+- Kubernetes 云原生部署；
+- Seata 分布式事务；
+- Kafka 双 MQ 架构；
+- 完整 Prometheus/Grafana 监控平台。
 
-### mall
+这些能力没有当前代码和证据支撑，只能作为后续优化方向。
 
-只看：
+## 当前结论
 
-- 订单模块。
-- 会员/权限模块。
-- Redis 使用。
-- RabbitMQ 使用。
-- 表结构和分层方式。
+FlowOrder 已完成主线收口：
 
-不看：
+```text
+V7-lite 预约准入
+-> V8 持久化异步预约
+-> Redis/MySQL 库存预扣
+-> Outbox + RabbitMQ 下单
+-> V9 订单确认/取消/超时履约
+-> V10 恢复控制面
+-> V12 证据链、架构图和面试材料
+```
 
-- 前端。
-- 商品详情细节。
-- 营销活动细节。
+后续建议停止主体功能开发，将时间投入到：
 
-### mall-swarm
-
-只看：
-
-- Gateway。
-- Nacos。
-- 认证中心。
-- 监控和部署结构。
-
-不深挖：
-
-- 全量微服务源码。
-- K8s 部署细节。
-
-### xxl-job
-
-只看：
-
-- 任务模型。
-- 执行器。
-- 失败重试。
-- 任务日志。
-
-### Sentinel
-
-只看：
-
-- 限流、熔断、降级使用方式。
-- 规则配置和监控指标。
-
-## 验收清单
-
-- 高并发预约压测不超卖。
-- 重复请求不会重复创建订单。
-- MQ 重复投递不会重复消费。
-- 订单超时能自动关闭并回滚库存。
-- Sentinel 限流生效。
-- 能输出压测报告：QPS、平均 RT、P95、错误率。
-- 能演示一次 TraceId 从 HTTP 请求到 MQ 消费再到任务落库。
-- 能讲清 OOM、CPU 飙高、死锁的排查步骤。
-
-## 简历表达草案
-
-- 设计并实现高并发预约订单系统，基于 Redis Lua 进行库存预扣，结合 MySQL 唯一索引与接口幂等表防止重复预约和库存超卖。
-- 引入 RabbitMQ 实现订单履约异步化，设计消息消费幂等、失败重试、死信队列和订单超时关闭机制，保障最终一致性。
-- 使用 Sentinel、线程池隔离和 TraceId 日志链路提升系统稳定性，并通过 JMeter 压测定位瓶颈，完成核心接口性能优化。
-
+- 项目讲解训练；
+- Java 并发、MySQL、Redis、RabbitMQ、Spring 事务复习；
+- 算法题；
+- 简历投递和模拟面试。
