@@ -203,17 +203,23 @@ CREATE TABLE fo_recovery_action_log (
    action_type VARCHAR(64) NOT NULL COMMENT '动作类型：REPLAY/IGNORE/CHECK等',
    target_type VARCHAR(64) NOT NULL COMMENT '目标类型：DEAD_LETTER/RESERVATION等',
    target_key VARCHAR(128) NOT NULL COMMENT '目标主键或业务键',
-   status TINYINT NOT NULL DEFAULT 0 COMMENT '0已预览 10执行中 20已提交 30失败',
+   status TINYINT NOT NULL DEFAULT 0 COMMENT '0已预览 10执行中 20已提交 30失败 40人工复核',
    operator VARCHAR(64) DEFAULT NULL COMMENT '操作人',
    reason VARCHAR(512) DEFAULT NULL COMMENT '操作原因',
    preview_result TEXT DEFAULT NULL COMMENT '预览结果快照',
    execute_result TEXT DEFAULT NULL COMMENT '执行结果快照',
    last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后错误',
+   execution_owner VARCHAR(128) DEFAULT NULL COMMENT '当前执行租约持有者',
+   execution_lease_until DATETIME DEFAULT NULL COMMENT '执行租约到期时间',
+   last_heartbeat_at DATETIME DEFAULT NULL COMMENT '执行租约最近心跳',
+   reconcile_count INT NOT NULL DEFAULT 0 COMMENT '对账/过期租约接管次数',
+   reconciled_at DATETIME DEFAULT NULL COMMENT '最近一次确定性对账完成时间',
    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
    UNIQUE KEY uk_action_request_id (action_request_id),
    KEY idx_target (target_type, target_key),
-   KEY idx_status_created (status, created_at)
+   KEY idx_status_created (status, created_at),
+   KEY idx_execution_lease (status, execution_lease_until)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='恢复动作审计日志';
 
 CREATE TABLE fo_recovery_proposal (

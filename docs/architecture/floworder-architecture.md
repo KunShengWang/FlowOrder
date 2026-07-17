@@ -1,6 +1,6 @@
 # FlowOrder 架构与主流程图
 
-更新时间：2026-07-08
+更新时间：2026-07-17
 
 FlowOrder 的定位是“高并发预约交易与履约一致性平台”。核心不是接口数量，而是围绕预约准入、异步受理、库存预扣、订单履约和异常恢复，证明并发正确性、可靠消息和最终一致性。
 
@@ -162,6 +162,21 @@ sequenceDiagram
 | 领域边界 | recovery 不直接修改订单或库存核心状态，恢复动作委托领域服务 |
 | 审计留痕 | `fo_recovery_action_log` 记录 operator、reason、previewResult、executeResult |
 
+### M3 Action 租约与对账
+
+```mermaid
+stateDiagram-v2
+    [*] --> PREVIEWED
+    PREVIEWED --> EXECUTING: 原 actionRequestId 抢占租约
+    EXECUTING --> SUBMITTED: 消息可靠提交
+    EXECUTING --> EXECUTING: 租约过期且死信仍 PENDING，CAS 接管
+    EXECUTING --> SUBMITTED: 业务已收敛，补记动作结果
+    EXECUTING --> MANUAL_REVIEW: 无法证明执行或结果
+    SUBMITTED --> SUBMITTED: 查询或重复 reconcile
+```
+
+Action 状态和业务结果是两个维度。`SUBMITTED` 仍需结合扣减 `RELEASED`、库存不变量和关联死信终态才能得到 `caseOutcome=RESOLVED`。
+
 ## 5. 面试讲解顺序
 
 建议按以下顺序讲，不要从技术栈开始：
@@ -172,7 +187,7 @@ sequenceDiagram
 3. 异步化：V8 请求先落库，数据库租约 + 有界线程池处理。
 4. 可靠消息：Outbox + RabbitMQ + Confirm + 手动 ACK + 消费幂等 + DLQ。
 5. 履约闭环：确认、取消、超时通过订单状态事件驱动库存 SOLD/RELEASED。
-6. 恢复控制：preview/execute + actionRequestId 幂等 + 审计日志。
+6. 恢复控制：不可变 Proposal + 审批 + actionRequestId 幂等 + Action 租约/对账。
 7. 证据：JMeter、SQL 库存恒等式、状态收敛、自动化测试和故障记录。
 ```
 

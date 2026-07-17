@@ -6,6 +6,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.exception.BizException;
 import com.javaup.resource.dto.RecoveryCaseResult;
+import com.javaup.resource.dto.RecoveryActionReconcileRequest;
+import com.javaup.resource.dto.RecoveryActionResult;
 import com.javaup.resource.dto.RecoveryDeadLetterRequest;
 import com.javaup.resource.dto.RecoveryProposalCreateRequest;
 import com.javaup.resource.dto.RecoveryProposalExecuteRequest;
@@ -49,6 +51,7 @@ public class RecoveryProposalServiceImpl implements RecoveryProposalService {
     private static final int ACTION_EXECUTING = 10;
     private static final int ACTION_SUBMITTED = 20;
     private static final int ACTION_FAILED = 30;
+    private static final int ACTION_MANUAL_REVIEW = 40;
 
     private static final int DEAD_PENDING = 0;
     private static final int DEAD_REPLAYING = 10;
@@ -181,15 +184,88 @@ public class RecoveryProposalServiceImpl implements RecoveryProposalService {
             throw new BizException("Proposal 当前状态不可执行：" + proposalStatus(proposal.getStatus()));
         }
 
+        executeApprovedAction(
+                proposal,
+                request.getApprovedBy(),
+                request.getExecutionOwner()
+        );
+        return find(proposal.getProposalId());
+    }
+
+    @Override
+    public RecoveryActionResult findAction(String actionRequestId) {
+        RecoveryProposalEntity proposal = requireProposalByActionRequestId(actionRequestId);
+        RecoveryActionLogEntity action = findActionLog(proposal.getActionRequestId());
+        RecoveryCaseResult snapshot = inspect(proposal);
+        return toActionResult(proposal, action, snapshot, reconciliationStatus(action, snapshot));
+    }
+
+    @Override
+    public RecoveryActionResult reconcileAction(
+            String actionRequestId,
+            RecoveryActionReconcileRequest request
+    ) {
+        String owner = request == null ? null : normalize(request.getExecutionOwner(), 128);
+        if (!StringUtils.hasText(owner)) {
+            throw new BizException("reconcile 必须携带 executionOwner");
+        }
+        RecoveryProposalEntity proposal = requireProposalByActionRequestId(actionRequestId);
+        RecoveryActionLogEntity action = findActionLog(proposal.getActionRequestId());
+        RecoveryCaseResult snapshot = inspect(proposal);
+
+        if (action == null) {
+            return toActionResult(proposal, null, snapshot,
+                    isBusinessConverged(snapshot) ? "RESOLVED" : "NOT_STARTED");
+        }
+        if (Objects.equals(action.getStatus(), ACTION_SUBMITTED)) {
+            return toActionResult(proposal, action, snapshot, reconciliationStatus(action, snapshot));
+        }
+        if (Objects.equals(action.getStatus(), ACTION_FAILED)
+                || Objects.equals(action.getStatus(), ACTION_MANUAL_REVIEW)) {
+            return toActionResult(proposal, action, snapshot, "MANUAL_REVIEW");
+        }
+        if (!Objects.equals(action.getStatus(), ACTION_EXECUTING)) {
+            return toActionResult(proposal, action, snapshot, "NOT_STARTED");
+        }
+
+        if (isBusinessConverged(snapshot)) {
+            markReconciledSubmitted(action, owner);
+            action = findActionLog(proposal.getActionRequestId());
+            return toActionResult(proposal, action, inspect(proposal), "RESOLVED");
+        }
+
+        Integer deadStatus = targetDeadLetterStatus(snapshot, proposal.getTargetKey());
+        if (Objects.equals(deadStatus, DEAD_REPLAYING)) {
+            return toActionResult(proposal, action, snapshot, "WAITING_REPLAY_RESULT");
+        }
+        if (Objects.equals(deadStatus, DEAD_PENDING) && leaseExpired(action)) {
+            executeApprovedAction(proposal, proposal.getApprovedBy(), owner);
+            action = findActionLog(proposal.getActionRequestId());
+            return toActionResult(proposal, action, inspect(proposal), "RECLAIMED");
+        }
+        if (Objects.equals(deadStatus, DEAD_PENDING)) {
+            return toActionResult(proposal, action, snapshot, "WAITING_ACTIVE_LEASE");
+        }
+
+        markManualReview(action, owner, "无法证明恢复动作或业务结果，禁止自动重放");
+        action = findActionLog(proposal.getActionRequestId());
+        return toActionResult(proposal, action, inspect(proposal), "MANUAL_REVIEW");
+    }
+
+    private void executeApprovedAction(RecoveryProposalEntity proposal,
+                                       String approvedBy,
+                                       String executionOwner) {
         RecoveryDeadLetterRequest action = new RecoveryDeadLetterRequest();
         action.setActionRequestId(proposal.getActionRequestId());
         action.setDeadLetterId(parseTargetId(proposal.getTargetKey()));
         action.setActionType(proposal.getActionType());
-        action.setOperator(limit(request.getApprovedBy(), 64));
+        action.setOperator(limit(approvedBy, 64));
         action.setReason(proposal.getSuggestedReason());
+        action.setExecutionOwner(StringUtils.hasText(executionOwner)
+                ? normalize(executionOwner, 128)
+                : "proposal:" + proposal.getProposalId());
         action.setForce(false);
         recoveryService.executeDeadLetter(action);
-        return find(proposal.getProposalId());
     }
 
     private void validateCreate(RecoveryProposalCreateRequest request) {
@@ -322,7 +398,7 @@ public class RecoveryProposalServiceImpl implements RecoveryProposalService {
     }
 
     private RecoveryProposalResult toResult(RecoveryProposalEntity proposal, RecoveryCaseResult snapshot) {
-        RecoveryActionLogEntity action = findAction(proposal.getActionRequestId());
+        RecoveryActionLogEntity action = findActionLog(proposal.getActionRequestId());
         String actionStatus = actionStatus(action == null ? null : action.getStatus());
         RecoveryProposalResult result = new RecoveryProposalResult();
         result.setProposalId(proposal.getProposalId());
@@ -360,22 +436,133 @@ public class RecoveryProposalServiceImpl implements RecoveryProposalService {
         if (snapshot == null) {
             return "MANUAL_REVIEW";
         }
-        boolean converged = "ALREADY_CONVERGED".equals(snapshot.getDiagnosisCode())
-                && snapshot.getDeadLetters().stream().noneMatch(item ->
-                Objects.equals(item.getStatus(), DEAD_PENDING)
-                        || Objects.equals(item.getStatus(), DEAD_REPLAYING));
+        boolean converged = isBusinessConverged(snapshot);
         if ("SUBMITTED".equals(actionStatus) && converged) {
             return "RESOLVED";
         }
         if (converged) {
             return "ALREADY_CONVERGED";
         }
-        if ("FAILED".equals(actionStatus)
+        if (List.of("FAILED", "MANUAL_REVIEW").contains(actionStatus)
                 || List.of("DEPENDENCY_UNAVAILABLE", "FACT_CONFLICT", "UNSUPPORTED_EVENT")
                 .contains(snapshot.getDiagnosisCode())) {
             return "MANUAL_REVIEW";
         }
         return "NOT_CONVERGED";
+    }
+
+    private boolean isBusinessConverged(RecoveryCaseResult snapshot) {
+        return snapshot != null
+                && "ALREADY_CONVERGED".equals(snapshot.getDiagnosisCode())
+                && snapshot.getDeadLetters().stream().noneMatch(item ->
+                Objects.equals(item.getStatus(), DEAD_PENDING)
+                        || Objects.equals(item.getStatus(), DEAD_REPLAYING));
+    }
+
+    private Integer targetDeadLetterStatus(RecoveryCaseResult snapshot, String targetKey) {
+        if (snapshot == null) {
+            return null;
+        }
+        return snapshot.getDeadLetters().stream()
+                .filter(item -> Objects.equals(String.valueOf(item.getDeadLetterId()), targetKey))
+                .map(RecoveryCaseResult.DeadLetterFact::getStatus)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean leaseExpired(RecoveryActionLogEntity action) {
+        return action.getExecutionLeaseUntil() == null
+                || !LocalDateTime.now(clock).isBefore(action.getExecutionLeaseUntil());
+    }
+
+    private void markReconciledSubmitted(RecoveryActionLogEntity action, String owner) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        actionLogMapper.update(
+                null,
+                Wrappers.<RecoveryActionLogEntity>lambdaUpdate()
+                        .eq(RecoveryActionLogEntity::getId, action.getId())
+                        .eq(RecoveryActionLogEntity::getStatus, ACTION_EXECUTING)
+                        .set(RecoveryActionLogEntity::getStatus, ACTION_SUBMITTED)
+                        .set(RecoveryActionLogEntity::getExecutionOwner, owner)
+                        .set(RecoveryActionLogEntity::getExecutionLeaseUntil, null)
+                        .set(RecoveryActionLogEntity::getLastHeartbeatAt, now)
+                        .set(RecoveryActionLogEntity::getReconcileCount, reconcileCount(action) + 1)
+                        .set(RecoveryActionLogEntity::getReconciledAt, now)
+                        .set(RecoveryActionLogEntity::getLastError, null)
+                        .set(RecoveryActionLogEntity::getExecuteResult, toJson(Map.of(
+                                "status", "RECONCILED_SUBMITTED",
+                                "reason", "业务事实已收敛，补记动作提交结果",
+                                "reconciledAt", now
+                        )))
+                        .set(RecoveryActionLogEntity::getUpdatedAt, now)
+        );
+    }
+
+    private void markManualReview(RecoveryActionLogEntity action, String owner, String reason) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        actionLogMapper.update(
+                null,
+                Wrappers.<RecoveryActionLogEntity>lambdaUpdate()
+                        .eq(RecoveryActionLogEntity::getId, action.getId())
+                        .eq(RecoveryActionLogEntity::getStatus, ACTION_EXECUTING)
+                        .set(RecoveryActionLogEntity::getStatus, ACTION_MANUAL_REVIEW)
+                        .set(RecoveryActionLogEntity::getExecutionOwner, owner)
+                        .set(RecoveryActionLogEntity::getExecutionLeaseUntil, null)
+                        .set(RecoveryActionLogEntity::getLastHeartbeatAt, now)
+                        .set(RecoveryActionLogEntity::getReconcileCount, reconcileCount(action) + 1)
+                        .set(RecoveryActionLogEntity::getReconciledAt, now)
+                        .set(RecoveryActionLogEntity::getLastError, limit(reason, 1024))
+                        .set(RecoveryActionLogEntity::getUpdatedAt, now)
+        );
+    }
+
+    private int reconcileCount(RecoveryActionLogEntity action) {
+        return action.getReconcileCount() == null ? 0 : action.getReconcileCount();
+    }
+
+    private RecoveryActionResult toActionResult(
+            RecoveryProposalEntity proposal,
+            RecoveryActionLogEntity action,
+            RecoveryCaseResult snapshot,
+            String reconciliationStatus
+    ) {
+        RecoveryActionResult result = new RecoveryActionResult();
+        result.setProposalId(proposal.getProposalId());
+        result.setActionRequestId(proposal.getActionRequestId());
+        result.setActionType(proposal.getActionType());
+        result.setTargetType(proposal.getTargetType());
+        result.setTargetKey(proposal.getTargetKey());
+        String currentActionStatus = actionStatus(action == null ? null : action.getStatus());
+        result.setActionStatus(currentActionStatus);
+        result.setCaseOutcome(caseOutcome(snapshot, currentActionStatus));
+        result.setReconciliationStatus(reconciliationStatus);
+        if (action != null) {
+            result.setExecutionOwner(action.getExecutionOwner());
+            result.setExecutionLeaseUntil(action.getExecutionLeaseUntil());
+            result.setLastHeartbeatAt(action.getLastHeartbeatAt());
+            result.setLeaseExpired(leaseExpired(action));
+            result.setReconcileCount(reconcileCount(action));
+            result.setLastError(action.getLastError());
+            result.setExecuteResult(action.getExecuteResult());
+            result.setReconciledAt(action.getReconciledAt());
+            result.setCreatedAt(action.getCreatedAt());
+            result.setUpdatedAt(action.getUpdatedAt());
+        } else {
+            result.setLeaseExpired(false);
+            result.setReconcileCount(0);
+        }
+        return result;
+    }
+
+    private String reconciliationStatus(RecoveryActionLogEntity action, RecoveryCaseResult snapshot) {
+        if (action == null) return isBusinessConverged(snapshot) ? "RESOLVED" : "NOT_STARTED";
+        if (Objects.equals(action.getStatus(), ACTION_SUBMITTED)) {
+            return isBusinessConverged(snapshot) ? "RESOLVED" : "WAITING_CONVERGENCE";
+        }
+        if (Objects.equals(action.getStatus(), ACTION_EXECUTING)) return "WAITING_EXECUTION";
+        if (Objects.equals(action.getStatus(), ACTION_FAILED)
+                || Objects.equals(action.getStatus(), ACTION_MANUAL_REVIEW)) return "MANUAL_REVIEW";
+        return "NOT_STARTED";
     }
 
     private RecoveryCaseResult inspect(RecoveryProposalEntity proposal) {
@@ -455,12 +642,27 @@ public class RecoveryProposalServiceImpl implements RecoveryProposalService {
         );
     }
 
-    private RecoveryActionLogEntity findAction(String actionRequestId) {
+    private RecoveryActionLogEntity findActionLog(String actionRequestId) {
         return actionLogMapper.selectOne(
                 Wrappers.<RecoveryActionLogEntity>lambdaQuery()
                         .eq(RecoveryActionLogEntity::getActionRequestId, actionRequestId)
                         .last("limit 1")
         );
+    }
+
+    private RecoveryProposalEntity requireProposalByActionRequestId(String actionRequestId) {
+        if (!StringUtils.hasText(actionRequestId)) {
+            throw new BizException("actionRequestId不能为空");
+        }
+        RecoveryProposalEntity proposal = proposalMapper.selectOne(
+                Wrappers.<RecoveryProposalEntity>lambdaQuery()
+                        .eq(RecoveryProposalEntity::getActionRequestId, actionRequestId.trim())
+                        .last("limit 1")
+        );
+        if (proposal == null) {
+            throw new BizException("Recovery Action 未绑定 Proposal：" + actionRequestId);
+        }
+        return proposal;
     }
 
     private void ensureSameCreateRequest(RecoveryProposalEntity proposal, RecoveryProposalCreateRequest request) {
@@ -488,6 +690,7 @@ public class RecoveryProposalServiceImpl implements RecoveryProposalService {
         if (Objects.equals(status, ACTION_EXECUTING)) return "EXECUTING";
         if (Objects.equals(status, ACTION_SUBMITTED)) return "SUBMITTED";
         if (Objects.equals(status, ACTION_FAILED)) return "FAILED";
+        if (Objects.equals(status, ACTION_MANUAL_REVIEW)) return "MANUAL_REVIEW";
         return "UNKNOWN";
     }
 

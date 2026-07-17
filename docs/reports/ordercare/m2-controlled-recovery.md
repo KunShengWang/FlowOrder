@@ -1,5 +1,7 @@
 # OrderCare M2 受控恢复证据
 
+> 本文保留 M2 阶段证据。M3 Action 租约和 reconciliation 现已完成，当前状态见 [M3 Action 对账报告](m3-action-reconciliation.md)。
+
 ## 结论
 
 FlowOrder 已完成 OrderCare M2 业务侧纵向闭环：案例事实聚合、不可变 Proposal、版本化人工审批、幂等恢复动作和执行后业务收敛回查已经连成一条真实链路。

@@ -1,6 +1,6 @@
 # FlowOrder 简历与面试最终稿
 
-更新时间：2026-07-08
+更新时间：2026-07-17
 
 ## 1. 简历项目名称
 
@@ -39,7 +39,7 @@ FlowOrder 是一个面向高并发预约交易场景的后端项目，围绕预�
 
 4. 建立订单履约状态机，订单确认时将锁定库存转为成交库存，订单取消或超时时释放库存和用户额度，并通过订单状态事件回写预约请求履约状态；已完成确认、取消、超时三条链路的 SQL 核对。
 
-5. 设计不可变 Proposal -> 人工审批 -> 幂等执行 -> 业务回查的受控恢复闭环，由 FlowOrder 统一持有 Proposal 和 Action 事实；分离 `proposalId` 与 `actionRequestId`，审批绑定版本、状态指纹和影响摘要，并区分命令状态与业务结果状态。
+5. 设计不可变 Proposal -> 人工审批 -> 幂等执行 -> 业务回查的受控恢复闭环，由 FlowOrder 统一持有 Proposal 和 Action 事实；通过 `actionRequestId`、`EXECUTING` 租约和 reconciliation 处理响应丢失与崩溃窗口，并区分命令状态与业务结果状态。
 
 ## 5. 已有证据
 
@@ -52,6 +52,7 @@ FlowOrder 是一个面向高并发预约交易场景的后端项目，围绕预�
 | 超时关闭 | `ORDER_TIMEOUT` 后订单 `TIMEOUT`，预扣 `RELEASED`，额度释放 |
 | V10 execute 幂等 | `RecoveryServiceImplTest` 验证第二次相同 `actionRequestId` 返回 `IDEMPOTENT_SUBMITTED`；业务收敛单独验证 |
 | OrderCare M2 受控恢复 | 8 条 Proposal 服务测试 + 1 条真实 HTTP/MQ E2E；相关恢复测试合计 33 条全部通过 |
+| OrderCare M3 故障恢复 | 3 条租约测试 + 5 条对账测试；恢复域共 42 条通过，真实 HTTP/MQ E2E 验证 Action 查询和重复 reconcile |
 | 架构说明 | `docs/architecture/floworder-architecture.md` |
 
 证据文档：
@@ -61,6 +62,7 @@ FlowOrder 是一个面向高并发预约交易场景的后端项目，围绕预�
 - `docs/reports/v12/03-recovery-evidence.md`
 - `docs/reports/v12/04-timeout-close-evidence.md`
 - `docs/reports/ordercare/m2-controlled-recovery.md`
+- `docs/reports/ordercare/m3-action-reconciliation.md`
 
 ## 6. 三个技术难点
 
@@ -148,11 +150,11 @@ V8 请求先落库，多个实例都可能扫描到同一条请求。数据库�
 
 ### Q9：死信怎么恢复？
 
-死信先落库到 `fo_mq_dead_letter`。OrderCare M2 不允许 Agent 直接裸调重放，而是由 FlowOrder 创建不可变 Proposal，固化目标、版本、状态指纹、影响与警告摘要和有效期；人工审批绑定这份具体预演。执行时服务端重新校验状态漂移，再使用独立的 `actionRequestId` 提交幂等恢复命令。`proposalStatus`、`actionStatus`、`caseOutcome` 分开记录，因此 `SUBMITTED` 只代表命令已可靠提交，只有确定性业务回查通过才是 `RESOLVED`。
+死信先落库到 `fo_mq_dead_letter`。FlowOrder 创建不可变 Proposal，固化目标、版本、状态指纹、影响与警告摘要和有效期；人工审批绑定这份具体预演。执行使用独立 `actionRequestId` 和 Action 租约：活跃 EXECUTING 拒绝第二执行者，租约过期且死信仍 PENDING 时才能用原 ID CAS 接管；业务已收敛但动作日志未完成时补记 SUBMITTED，无法证明时转 MANUAL_REVIEW。`SUBMITTED` 只代表命令可靠提交，只有业务回查通过才是 `RESOLVED`。
 
 ### Q10：项目现在最大的不足是什么？
 
-我不会把它说成生产级高可用系统。当前已经在本地真实 MySQL、RabbitMQ 和服务进程上证明受控恢复 happy path，但写请求响应丢失后的 UNKNOWN 对账、执行租约、进程重启恢复、真实多实例部署和完整监控告警仍属于下一阶段。这个边界会明确写进简历和演示材料。
+我不会把它说成生产级高可用系统。当前已经在真实 MySQL、RabbitMQ 和服务进程上证明受控恢复、Action 查询与重复对账，并用自动化测试覆盖 EXECUTING 租约过期接管；enterprise-agent 侧也完成响应丢失和进程恢复证据。仍未完成真实多节点网络分区、可信服务身份、容量 SLO 和完整监控告警。
 
 ## 8. 风险点应答
 
@@ -191,5 +193,5 @@ FlowOrder：高并发预约交易与履约一致性平台
 - 基于 Outbox + RabbitMQ 构建异步下单链路，结合 Publisher Confirm、手动 ACK、消费幂等表和 DLQ 实现消息可追踪、可重试、可恢复。
 - 引入持久化预约请求表、claim_owner/claim_until 数据库租约和有界线程池实现 V8 异步预约处理；JMeter 100 并发、900 请求下 HTTP 错误率 0%，库存恒等式 diff=0。
 - 建立订单履约状态机，确认订单时 locked -> sold，取消/超时时 locked -> available，并通过 MQ 状态事件回写预约请求履约状态。
-- 设计不可变 Proposal -> 人工审批 -> 幂等执行 -> 业务回查的受控恢复闭环，分离 proposalId 与 actionRequestId，审批绑定状态指纹和影响摘要，并将命令提交状态与业务收敛结果分开建模。
+- 设计不可变 Proposal -> 人工审批 -> 幂等执行 -> 业务回查的受控恢复闭环，分离 proposalId 与 actionRequestId；通过 EXECUTING 租约和原 Action 对账处理结果未知，并将命令提交状态与业务收敛结果分开建模。
 ```

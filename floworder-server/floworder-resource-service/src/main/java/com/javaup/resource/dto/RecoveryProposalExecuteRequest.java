@@ -23,4 +23,7 @@ public class RecoveryProposalExecuteRequest {
     private String approvedBy;
 
     private String approvalComment;
+
+    /** enterprise-agent 服务端注入的 toolExecutionId，模型不可生成。 */
+    private String executionOwner;
 }

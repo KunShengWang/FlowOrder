@@ -21,6 +21,9 @@ public class RecoveryDeadLetterRequest {
 
     private String reason;
 
+    /** 服务端执行者标识，用于 EXECUTING 租约和崩溃接管，不参与业务幂等。 */
+    private String executionOwner;
+
     /**
      * 仅 IGNORE 使用。true 表示人工确认后强制忽略。
      */

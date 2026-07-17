@@ -38,6 +38,18 @@ public class RecoveryActionLogEntity {
 
     private String lastError;
 
+    /** 当前持有副作用执行权的实例/工具执行标识。 */
+    private String executionOwner;
+
+    /** EXECUTING 状态的可恢复租约，到期后只允许原 actionRequestId 重新抢占。 */
+    private LocalDateTime executionLeaseUntil;
+
+    private LocalDateTime lastHeartbeatAt;
+
+    private Integer reconcileCount;
+
+    private LocalDateTime reconciledAt;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

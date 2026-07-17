@@ -692,6 +692,117 @@
         }
       }
     },
+    "/internal/recovery/cases/inspect": {
+      "get": {
+        "summary": "OrderCare 案例事实诊断",
+        "description": "按 requestId/orderNo/deductNo/deadLetterId 聚合权威事实。需要 floworder.admin.enabled=true。",
+        "tags": ["恢复控制面"],
+        "parameters": [
+          {
+            "name": "identifierType",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string", "enum": ["REQUEST_ID", "ORDER_NO", "DEDUCT_NO", "DEAD_LETTER_ID"]},
+            "example": "REQUEST_ID"
+          },
+          {
+            "name": "identifierValue",
+            "in": "query",
+            "required": true,
+            "schema": {"type": "string"},
+            "example": "ORDERCARE-M05-REQUEST"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {
+              "code": {"type": "integer", "example": 200},
+              "message": {"type": "string", "example": "success"},
+              "data": {"$ref": "#/components/schemas/RecoveryCaseResult"}
+            }}}}
+          }
+        }
+      }
+    },
+    "/internal/recovery/proposals": {
+      "post": {
+        "summary": "创建不可变恢复 Proposal",
+        "description": "使用稳定 proposalId 幂等创建预演，不修改订单或库存终态。",
+        "tags": ["恢复控制面"],
+        "responses": {
+          "200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "code": {"type": "integer", "example": 200},
+            "message": {"type": "string", "example": "success"},
+            "data": {"$ref": "#/components/schemas/RecoveryProposalResult"}
+          }}}}}
+        },
+        "requestBody": {"required": true, "content": {"application/json": {
+          "schema": {"$ref": "#/components/schemas/RecoveryProposalCreateRequest"},
+          "example": {"proposalId": "prop-apifox-001", "identifierType": "REQUEST_ID", "identifierValue": "ORDERCARE-M05-REQUEST", "actionType": "REPLAY", "suggestedReason": "ORDER_TIMEOUT 库存释放消息进入死信"}
+        }}}
+      }
+    },
+    "/internal/recovery/proposals/{proposalId}": {
+      "get": {
+        "summary": "查询恢复 Proposal",
+        "description": "返回 Proposal、Action 命令状态和独立的业务结果状态。",
+        "tags": ["恢复控制面"],
+        "parameters": [{"name": "proposalId", "in": "path", "required": true, "schema": {"type": "string"}, "example": "prop-apifox-001"}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {
+          "code": {"type": "integer", "example": 200},
+          "message": {"type": "string", "example": "success"},
+          "data": {"$ref": "#/components/schemas/RecoveryProposalResult"}
+        }}}}}}
+      }
+    },
+    "/internal/recovery/proposals/{proposalId}/execute": {
+      "post": {
+        "summary": "执行已审批的恢复 Proposal",
+        "description": "审批必须绑定当前 Proposal 版本、状态指纹和摘要；executionOwner 用于 Action 租约。",
+        "tags": ["恢复控制面"],
+        "parameters": [{"name": "proposalId", "in": "path", "required": true, "schema": {"type": "string"}, "example": "prop-apifox-001"}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {
+          "code": {"type": "integer", "example": 200},
+          "message": {"type": "string", "example": "success"},
+          "data": {"$ref": "#/components/schemas/RecoveryProposalResult"}
+        }}}}}},
+        "requestBody": {"required": true, "content": {"application/json": {
+          "schema": {"$ref": "#/components/schemas/RecoveryProposalExecuteRequest"},
+          "example": {"proposalVersion": 1, "stateFingerprint": "从 Proposal 复制", "effectsDigest": "从 Proposal 复制", "warningsDigest": "从 Proposal 复制", "previewDigest": "从 Proposal 复制", "approvalId": "approval-apifox-001", "approvedBy": "operator-li", "approvalComment": "已核对影响和警告", "executionOwner": "tool-execution-apifox-001"}
+        }}}
+      }
+    },
+    "/internal/recovery/actions/{actionRequestId}": {
+      "get": {
+        "summary": "查询 Recovery Action 权威状态",
+        "description": "用于 execute 响应丢失或 Runtime 重启后的原 Action 对账。",
+        "tags": ["恢复控制面"],
+        "parameters": [{"name": "actionRequestId", "in": "path", "required": true, "schema": {"type": "string"}, "example": "act-from-proposal"}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {
+          "code": {"type": "integer", "example": 200},
+          "message": {"type": "string", "example": "success"},
+          "data": {"$ref": "#/components/schemas/RecoveryActionResult"}
+        }}}}}}
+      }
+    },
+    "/internal/recovery/actions/{actionRequestId}/reconcile": {
+      "post": {
+        "summary": "确定性对账或接管 Recovery Action",
+        "description": "只使用原 actionRequestId；活跃租约等待，过期租约按业务事实 CAS 接管。",
+        "tags": ["恢复控制面"],
+        "parameters": [{"name": "actionRequestId", "in": "path", "required": true, "schema": {"type": "string"}, "example": "act-from-proposal"}],
+        "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object", "properties": {
+          "code": {"type": "integer", "example": 200},
+          "message": {"type": "string", "example": "success"},
+          "data": {"$ref": "#/components/schemas/RecoveryActionResult"}
+        }}}}}},
+        "requestBody": {"required": true, "content": {"application/json": {
+          "schema": {"$ref": "#/components/schemas/RecoveryActionReconcileRequest"},
+          "example": {"executionOwner": "runtime-resume-apifox-001"}
+        }}}
+      }
+    },
     "/internal/recovery/reservation/check": {
       "get": {
         "summary": "V10 预约链路核对",
@@ -1794,6 +1905,86 @@
           }
         }
       },
+      "RecoveryCaseResult": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "schemaVersion": {"type": "string", "example": "floworder-recovery-case-v1"},
+          "caseKey": {"type": "string"},
+          "identifierType": {"type": "string"},
+          "identifierValue": {"type": "string"},
+          "diagnosisCode": {"type": "string"},
+          "factsComplete": {"type": "boolean"},
+          "recoveryEligible": {"type": "boolean"},
+          "evidence": {"type": "array", "items": {"type": "string"}},
+          "hardRisks": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "RecoveryProposalCreateRequest": {
+        "type": "object",
+        "required": ["proposalId", "identifierType", "identifierValue", "actionType"],
+        "properties": {
+          "proposalId": {"type": "string"},
+          "identifierType": {"type": "string"},
+          "identifierValue": {"type": "string"},
+          "actionType": {"type": "string", "enum": ["REPLAY"]},
+          "suggestedReason": {"type": "string"}
+        }
+      },
+      "RecoveryProposalExecuteRequest": {
+        "type": "object",
+        "required": ["proposalVersion", "stateFingerprint", "effectsDigest", "warningsDigest", "previewDigest", "approvalId", "approvedBy", "executionOwner"],
+        "properties": {
+          "proposalVersion": {"type": "integer"},
+          "stateFingerprint": {"type": "string"},
+          "effectsDigest": {"type": "string"},
+          "warningsDigest": {"type": "string"},
+          "previewDigest": {"type": "string"},
+          "approvalId": {"type": "string"},
+          "approvedBy": {"type": "string"},
+          "approvalComment": {"type": "string"},
+          "executionOwner": {"type": "string"}
+        }
+      },
+      "RecoveryProposalResult": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "schemaVersion": {"type": "string", "example": "floworder-recovery-proposal-v1"},
+          "proposalId": {"type": "string"},
+          "proposalVersion": {"type": "integer"},
+          "proposalStatus": {"type": "string"},
+          "actionRequestId": {"type": "string"},
+          "actionStatus": {"type": "string"},
+          "caseOutcome": {"type": "string"},
+          "stateFingerprint": {"type": "string"},
+          "previewDigest": {"type": "string"},
+          "canExecute": {"type": "boolean"},
+          "expiresAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "RecoveryActionReconcileRequest": {
+        "type": "object",
+        "required": ["executionOwner"],
+        "properties": {"executionOwner": {"type": "string"}}
+      },
+      "RecoveryActionResult": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "schemaVersion": {"type": "string", "example": "floworder-recovery-action-v1"},
+          "proposalId": {"type": "string"},
+          "actionRequestId": {"type": "string"},
+          "actionStatus": {"type": "string"},
+          "caseOutcome": {"type": "string"},
+          "reconciliationStatus": {"type": "string"},
+          "executionOwner": {"type": "string"},
+          "executionLeaseUntil": {"type": "string", "format": "date-time"},
+          "leaseExpired": {"type": "boolean"},
+          "reconcileCount": {"type": "integer"},
+          "reconciledAt": {"type": "string", "format": "date-time"}
+        }
+      },
       "RecoveryDeadLetterRequest": {
         "type": "object",
         "required": [
@@ -1827,6 +2018,10 @@
           "reason": {
             "type": "string",
             "example": "preview before replay"
+          },
+          "executionOwner": {
+            "type": "string",
+            "example": "tool-execution-001"
           },
           "force": {
             "type": "boolean",

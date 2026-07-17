@@ -19,10 +19,13 @@ import com.javaup.resource.mq.service.MqDeadLetterService;
 import com.javaup.resource.service.RecoveryService;
 import com.javaup.resource.service.ReservationRequestService;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -42,6 +45,7 @@ public class RecoveryServiceImpl implements RecoveryService {
      */
     private static final int ACTION_SUBMITTED = 20;
     private static final int ACTION_FAILED = 30;
+    private static final int ACTION_MANUAL_REVIEW = 40;
 
     private static final int DEAD_PENDING = 0;
     private static final int DEAD_REPLAYING = 10;
@@ -58,7 +62,29 @@ public class RecoveryServiceImpl implements RecoveryService {
     private final MqOutboxMapper outboxMapper;
     private final OrderClient orderClient;
     private final ObjectMapper objectMapper;
+    private final long actionLeaseSeconds;
+    private final Clock clock;
 
+    @Autowired
+    public RecoveryServiceImpl(
+            MqDeadLetterService deadLetterService,
+            RecoveryActionLogMapper actionLogMapper,
+            ReservationRequestService requestService,
+            ReservationRequestMapper requestMapper,
+            StockDeductRecordMapper deductRecordMapper,
+            StockItemMapper stockItemMapper,
+            UserReservationQuotaMapper quotaMapper,
+            MqOutboxMapper outboxMapper,
+            OrderClient orderClient,
+            ObjectMapper objectMapper,
+            @Value("${floworder.recovery.action-lease-seconds:15}") long actionLeaseSeconds
+    ) {
+        this(deadLetterService, actionLogMapper, requestService, requestMapper,
+                deductRecordMapper, stockItemMapper, quotaMapper, outboxMapper,
+                orderClient, objectMapper, actionLeaseSeconds, Clock.systemDefaultZone());
+    }
+
+    /** 保留给现有单元测试和非 Spring 构造，生产构造由上面的 @Autowired 入口负责。 */
     public RecoveryServiceImpl(
             MqDeadLetterService deadLetterService,
             RecoveryActionLogMapper actionLogMapper,
@@ -71,6 +97,25 @@ public class RecoveryServiceImpl implements RecoveryService {
             OrderClient orderClient,
             ObjectMapper objectMapper
     ) {
+        this(deadLetterService, actionLogMapper, requestService, requestMapper,
+                deductRecordMapper, stockItemMapper, quotaMapper, outboxMapper,
+                orderClient, objectMapper, 15, Clock.systemDefaultZone());
+    }
+
+    RecoveryServiceImpl(
+            MqDeadLetterService deadLetterService,
+            RecoveryActionLogMapper actionLogMapper,
+            ReservationRequestService requestService,
+            ReservationRequestMapper requestMapper,
+            StockDeductRecordMapper deductRecordMapper,
+            StockItemMapper stockItemMapper,
+            UserReservationQuotaMapper quotaMapper,
+            MqOutboxMapper outboxMapper,
+            OrderClient orderClient,
+            ObjectMapper objectMapper,
+            long actionLeaseSeconds,
+            Clock clock
+    ) {
         this.deadLetterService = deadLetterService;
         this.actionLogMapper = actionLogMapper;
         this.requestService = requestService;
@@ -81,6 +126,8 @@ public class RecoveryServiceImpl implements RecoveryService {
         this.outboxMapper = outboxMapper;
         this.orderClient = orderClient;
         this.objectMapper = objectMapper;
+        this.actionLeaseSeconds = Math.max(1, actionLeaseSeconds);
+        this.clock = clock;
     }
 
     @Override
@@ -132,13 +179,13 @@ public class RecoveryServiceImpl implements RecoveryService {
             }
             result.setStatus("SUBMITTED");
             result.setExecutedAt(LocalDateTime.now());
-            markExecuteSubmitted(log.getId(), result);
+            markExecuteSubmitted(log.getId(), log.getExecutionOwner(), result);
             return result;
         } catch (RuntimeException exception) {
             result.setStatus("FAILED");
             result.setMessage(limit(exception.getMessage(), 512));
             result.setExecutedAt(LocalDateTime.now());
-            markExecuteFailed(log.getId(), result, exception.getMessage());
+            markExecuteFailed(log.getId(), log.getExecutionOwner(), result, exception.getMessage());
             throw exception;
         }
     }
@@ -298,16 +345,48 @@ public class RecoveryServiceImpl implements RecoveryService {
             RecoveryPreviewResult preview
     ) {
         RecoveryActionLogEntity existing = findActionLog(request.getActionRequestId());
+        LocalDateTime now = LocalDateTime.now(clock);
+        String executionOwner = executionOwner(request);
+        LocalDateTime leaseUntil = now.plusSeconds(actionLeaseSeconds);
         if (existing != null) {
             ensureSameAction(existing, request);
             if (Objects.equals(existing.getStatus(), ACTION_SUBMITTED)) {
                 return existing;
             }
             if (Objects.equals(existing.getStatus(), ACTION_EXECUTING)) {
-                throw new BizException("恢复动作正在执行中，不能重复提交");
+                if (existing.getExecutionLeaseUntil() != null
+                        && now.isBefore(existing.getExecutionLeaseUntil())) {
+                    throw new BizException("ACTION_EXECUTING_LEASE_ACTIVE");
+                }
+                int rows = actionLogMapper.update(
+                        null,
+                        Wrappers.<RecoveryActionLogEntity>lambdaUpdate()
+                                .eq(RecoveryActionLogEntity::getId, existing.getId())
+                                .eq(RecoveryActionLogEntity::getStatus, ACTION_EXECUTING)
+                                .and(lease -> lease
+                                        .isNull(RecoveryActionLogEntity::getExecutionLeaseUntil)
+                                        .or()
+                                        .le(RecoveryActionLogEntity::getExecutionLeaseUntil, now))
+                                .set(RecoveryActionLogEntity::getExecutionOwner, executionOwner)
+                                .set(RecoveryActionLogEntity::getExecutionLeaseUntil, leaseUntil)
+                                .set(RecoveryActionLogEntity::getLastHeartbeatAt, now)
+                                .set(RecoveryActionLogEntity::getReconcileCount,
+                                        safeReconcileCount(existing) + 1)
+                                .set(RecoveryActionLogEntity::getLastError, null)
+                                .set(RecoveryActionLogEntity::getUpdatedAt, now)
+                );
+                if (rows != 1) {
+                    throw new BizException("ACTION_EXECUTING_LEASE_CHANGED");
+                }
+                existing.setExecutionOwner(executionOwner);
+                existing.setExecutionLeaseUntil(leaseUntil);
+                existing.setLastHeartbeatAt(now);
+                existing.setReconcileCount(safeReconcileCount(existing) + 1);
+                return existing;
             }
-            if (Objects.equals(existing.getStatus(), ACTION_FAILED)) {
-                throw new BizException("actionRequestId 已执行失败，请换新的 actionRequestId 重试");
+            if (Objects.equals(existing.getStatus(), ACTION_FAILED)
+                    || Objects.equals(existing.getStatus(), ACTION_MANUAL_REVIEW)) {
+                throw new BizException("actionRequestId 已有确定失败或人工复核结果，必须重新预演");
             }
             int rows = actionLogMapper.update(
                     null,
@@ -316,14 +395,20 @@ public class RecoveryServiceImpl implements RecoveryService {
                             .eq(RecoveryActionLogEntity::getStatus, ACTION_PREVIEWED)
                             .set(RecoveryActionLogEntity::getStatus, ACTION_EXECUTING)
                             .set(RecoveryActionLogEntity::getOperator, limit(request.getOperator(), 64))
-                            .set(RecoveryActionLogEntity::getReason, limit(request.getReason(), 512))
-                            .set(RecoveryActionLogEntity::getPreviewResult, toJson(preview))
-                            .set(RecoveryActionLogEntity::getUpdatedAt, LocalDateTime.now())
+                             .set(RecoveryActionLogEntity::getReason, limit(request.getReason(), 512))
+                             .set(RecoveryActionLogEntity::getPreviewResult, toJson(preview))
+                             .set(RecoveryActionLogEntity::getExecutionOwner, executionOwner)
+                             .set(RecoveryActionLogEntity::getExecutionLeaseUntil, leaseUntil)
+                             .set(RecoveryActionLogEntity::getLastHeartbeatAt, now)
+                             .set(RecoveryActionLogEntity::getUpdatedAt, now)
             );
             if (rows != 1) {
                 throw new BizException("恢复动作状态已变化，请重新查询");
             }
             existing.setStatus(ACTION_EXECUTING);
+            existing.setExecutionOwner(executionOwner);
+            existing.setExecutionLeaseUntil(leaseUntil);
+            existing.setLastHeartbeatAt(now);
             return existing;
         }
 
@@ -336,8 +421,12 @@ public class RecoveryServiceImpl implements RecoveryService {
         log.setOperator(limit(request.getOperator(), 64));
         log.setReason(limit(request.getReason(), 512));
         log.setPreviewResult(toJson(preview));
-        log.setCreatedAt(LocalDateTime.now());
-        log.setUpdatedAt(LocalDateTime.now());
+        log.setExecutionOwner(executionOwner);
+        log.setExecutionLeaseUntil(leaseUntil);
+        log.setLastHeartbeatAt(now);
+        log.setReconcileCount(0);
+        log.setCreatedAt(now);
+        log.setUpdatedAt(now);
         actionLogMapper.insert(log);
         return log;
     }
@@ -364,28 +453,57 @@ public class RecoveryServiceImpl implements RecoveryService {
         return result;
     }
 
-    private void markExecuteSubmitted(Long id, RecoveryExecuteResult result) {
-        actionLogMapper.update(
+    private void markExecuteSubmitted(Long id,
+                                      String executionOwner,
+                                      RecoveryExecuteResult result) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        int rows = actionLogMapper.update(
                 null,
                 Wrappers.<RecoveryActionLogEntity>lambdaUpdate()
                         .eq(RecoveryActionLogEntity::getId, id)
+                        .eq(RecoveryActionLogEntity::getStatus, ACTION_EXECUTING)
+                        .eq(RecoveryActionLogEntity::getExecutionOwner, executionOwner)
                         .set(RecoveryActionLogEntity::getStatus, ACTION_SUBMITTED)
                         .set(RecoveryActionLogEntity::getExecuteResult, toJson(result))
                         .set(RecoveryActionLogEntity::getLastError, null)
-                        .set(RecoveryActionLogEntity::getUpdatedAt, LocalDateTime.now())
+                        .set(RecoveryActionLogEntity::getExecutionLeaseUntil, null)
+                        .set(RecoveryActionLogEntity::getLastHeartbeatAt, now)
+                        .set(RecoveryActionLogEntity::getUpdatedAt, now)
         );
+        if (rows != 1) {
+            throw new BizException("ACTION_EXECUTION_LEASE_LOST");
+        }
     }
 
-    private void markExecuteFailed(Long id, RecoveryExecuteResult result, String error) {
+    private void markExecuteFailed(Long id,
+                                   String executionOwner,
+                                   RecoveryExecuteResult result,
+                                   String error) {
+        LocalDateTime now = LocalDateTime.now(clock);
         actionLogMapper.update(
                 null,
                 Wrappers.<RecoveryActionLogEntity>lambdaUpdate()
                         .eq(RecoveryActionLogEntity::getId, id)
+                        .eq(RecoveryActionLogEntity::getStatus, ACTION_EXECUTING)
+                        .eq(RecoveryActionLogEntity::getExecutionOwner, executionOwner)
                         .set(RecoveryActionLogEntity::getStatus, ACTION_FAILED)
                         .set(RecoveryActionLogEntity::getExecuteResult, toJson(result))
                         .set(RecoveryActionLogEntity::getLastError, limit(error, 1024))
-                        .set(RecoveryActionLogEntity::getUpdatedAt, LocalDateTime.now())
+                        .set(RecoveryActionLogEntity::getExecutionLeaseUntil, null)
+                        .set(RecoveryActionLogEntity::getLastHeartbeatAt, now)
+                        .set(RecoveryActionLogEntity::getUpdatedAt, now)
         );
+    }
+
+    private String executionOwner(RecoveryDeadLetterRequest request) {
+        if (StringUtils.hasText(request.getExecutionOwner())) {
+            return limit(request.getExecutionOwner().trim(), 128);
+        }
+        return limit("operator:" + request.getOperator(), 128);
+    }
+
+    private int safeReconcileCount(RecoveryActionLogEntity action) {
+        return action.getReconcileCount() == null ? 0 : action.getReconcileCount();
     }
 
     private RecoveryActionLogEntity findActionLog(String actionRequestId) {

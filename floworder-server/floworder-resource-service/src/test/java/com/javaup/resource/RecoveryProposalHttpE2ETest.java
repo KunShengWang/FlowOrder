@@ -80,6 +80,7 @@ class RecoveryProposalHttpE2ETest {
         executeRequest.put("approvalId", "approval-ordercare-m2-http-e2e");
         executeRequest.put("approvedBy", "operator-e2e");
         executeRequest.put("approvalComment", "reviewed immutable effects and warnings");
+        executeRequest.put("executionOwner", "tool-execution-ordercare-m3-http-e2e");
 
         JsonNode submitted = post(
                 "/internal/recovery/proposals/" + PROPOSAL_ID + "/execute",
@@ -93,6 +94,24 @@ class RecoveryProposalHttpE2ETest {
         assertEquals("RESOLVED", resolved.path("caseOutcome").asText());
         assertEquals("SUBMITTED", resolved.path("actionStatus").asText());
         assertEquals("operator-e2e", resolved.path("approvedBy").asText());
+
+        String actionRequestId = resolved.path("actionRequestId").asText();
+        JsonNode action = getData("/internal/recovery/actions/" + actionRequestId);
+        assertEquals(PROPOSAL_ID, action.path("proposalId").asText());
+        assertEquals(actionRequestId, action.path("actionRequestId").asText());
+        assertEquals("SUBMITTED", action.path("actionStatus").asText());
+        assertEquals("RESOLVED", action.path("caseOutcome").asText());
+        assertEquals("RESOLVED", action.path("reconciliationStatus").asText());
+        assertEquals("tool-execution-ordercare-m3-http-e2e", action.path("executionOwner").asText());
+
+        JsonNode reconciled = post(
+                "/internal/recovery/actions/" + actionRequestId + "/reconcile",
+                Map.of("executionOwner", "runtime-resume-ordercare-m3-http-e2e")
+        );
+        assertEquals(actionRequestId, reconciled.path("actionRequestId").asText());
+        assertEquals("SUBMITTED", reconciled.path("actionStatus").asText());
+        assertEquals("RESOLVED", reconciled.path("caseOutcome").asText());
+        assertEquals("RESOLVED", reconciled.path("reconciliationStatus").asText());
 
         JsonNode repeated = post(
                 "/internal/recovery/proposals/" + PROPOSAL_ID + "/execute",

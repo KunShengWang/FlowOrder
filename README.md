@@ -4,7 +4,7 @@ FlowOrder 是一个面向 Java 后端简历和面试的高并发预约交易与�
 
 项目围绕“预约准入 -> 异步受理 -> 库存预扣 -> 可靠下单 -> 订单履约 -> 异常恢复”构建闭环，重点证明并发正确性、可靠消息、最终一致性、线程池治理、压测验证和故障恢复能力。
 
-> 当前状态：主体功能已收口，V7-lite / V8 / V9-lite / V10-core / V12 证据链，以及 OrderCare M0.5 恢复基线、M1 只读案例诊断和 M2 受控恢复闭环均已完成。后续不再扩普通业务模块，只做可靠性深化、Agent 受控集成和面试复盘。
+> 当前状态：主体功能已收口，V7-lite / V8 / V9-lite / V10-core / V12 证据链，以及 OrderCare M0.5 恢复基线、M1 只读诊断、M2 受控恢复和 M3 Action 租约/对账均已完成。当前达到 Interview Strong，但未完成生产身份与部署硬化。
 
 ## 项目定位
 
@@ -171,6 +171,8 @@ GET  /internal/recovery/cases/inspect?requestId=xxx
 POST /internal/recovery/proposals
 GET  /internal/recovery/proposals/{proposalId}
 POST /internal/recovery/proposals/{proposalId}/execute
+GET  /internal/recovery/actions/{actionRequestId}
+POST /internal/recovery/actions/{actionRequestId}/reconcile
 POST /internal/recovery/dead-letter/preview
 POST /internal/recovery/dead-letter/execute
 GET  /internal/recovery/reservation/check?requestId=xxx
@@ -193,6 +195,14 @@ OrderCare M2 在 V10-core 之上增加受控恢复契约：
 - execute 重新校验版本、摘要、有效期和业务状态，状态漂移后原审批失效；
 - `proposalStatus`、`actionStatus`、`caseOutcome` 分字段表达，`SUBMITTED` 不冒充 `RESOLVED`；
 - 相同 Proposal 重复 execute 复用同一 `actionRequestId`，不会重复释放库存。
+
+OrderCare M3 继续补齐故障正确性：
+
+- Action 持久化 `executionOwner`、`executionLeaseUntil`、心跳、对账次数和对账时间；
+- 活跃 `EXECUTING` 租约拒绝第二执行者，租约过期后只允许以原 `actionRequestId` CAS 接管；
+- 业务已经收敛但 Action 日志未完成时补记 `SUBMITTED`，死信 `REPLAYING` 时等待；
+- 无法证明动作是否执行时进入 `MANUAL_REVIEW`，禁止自动创建新动作；
+- Action 查询与 reconcile 接口为 enterprise-agent 的 UNKNOWN/崩溃恢复提供权威事实。
 
 ## 已验证证据
 
@@ -255,10 +265,13 @@ fo_mq_outbox：创建命令和结果消息均 SENT
 8. OrderCare M2 受控恢复闭环
    [docs/reports/ordercare/m2-controlled-recovery.md](docs/reports/ordercare/m2-controlled-recovery.md)
 
-9. 简历与面试最终稿
+9. OrderCare M3 Action 租约与对账
+   [docs/reports/ordercare/m3-action-reconciliation.md](docs/reports/ordercare/m3-action-reconciliation.md)
+
+10. 简历与面试最终稿
    [docs/resume/floworder-interview-guide.md](docs/resume/floworder-interview-guide.md)
 
-10. Apifox / OpenAPI 接口集合
+11. Apifox / OpenAPI 接口集合
    [apifox/floworder.openapi.json](apifox/floworder.openapi.json)
 
 早期 V8 实验过程记录仍保留在 `docs/reports/v8`，其中包含中间态问题和排查过程。判断最终项目状态时，以 `docs/reports/v12`、`docs/architecture`、`docs/resume` 和当前代码为准。
@@ -297,7 +310,7 @@ FlowOrder：高并发预约交易与履约一致性平台
 - 基于 Outbox + RabbitMQ 构建异步下单链路，结合 Publisher Confirm、手动 ACK、消费幂等表和 DLQ 实现消息可追踪、可重试、可恢复。
 - 引入持久化预约请求表、claim_owner/claim_until 数据库租约和有界线程池实现 V8 异步预约处理；JMeter 100 并发、900 请求下 HTTP 错误率 0%，库存恒等式 diff=0。
 - 建立订单履约状态机，确认订单时 locked -> sold，取消/超时时 locked -> available，并通过 MQ 状态事件回写预约请求履约状态。
-- 设计不可变 Proposal -> 人工审批 -> 幂等执行 -> 业务回查的受控恢复闭环，分离 proposalId 与 actionRequestId，审批绑定状态指纹和影响摘要，并将命令提交状态与业务收敛结果分开建模。
+- 设计不可变 Proposal -> 人工审批 -> 幂等执行 -> 业务回查的受控恢复闭环，分离 proposalId 与 actionRequestId；通过 Action 执行租约和原 ID 对账处理响应丢失与崩溃窗口，并将命令提交状态与业务收敛结果分开建模。
 ```
 
 不要写成：

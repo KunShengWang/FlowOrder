@@ -561,6 +561,10 @@ public class RecoveryCaseServiceImpl implements RecoveryCaseService {
         fact.setTargetKey(source.getTargetKey());
         fact.setStatus(source.getStatus());
         fact.setStatusName(actionStatusName(source.getStatus()));
+        fact.setExecutionOwner(source.getExecutionOwner());
+        fact.setExecutionLeaseUntil(source.getExecutionLeaseUntil());
+        fact.setLastHeartbeatAt(source.getLastHeartbeatAt());
+        fact.setReconcileCount(source.getReconcileCount());
         fact.setLastError(bounded(source.getLastError()));
         fact.setUpdatedAt(source.getUpdatedAt());
         return fact;
@@ -678,6 +682,9 @@ public class RecoveryCaseServiceImpl implements RecoveryCaseService {
         }
         if (Objects.equals(status, 30)) {
             return "FAILED";
+        }
+        if (Objects.equals(status, 40)) {
+            return "MANUAL_REVIEW";
         }
         return "UNKNOWN";
     }

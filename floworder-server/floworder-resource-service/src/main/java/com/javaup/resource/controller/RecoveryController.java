@@ -5,6 +5,8 @@ import com.javaup.resource.dto.RecoveryDeadLetterRequest;
 import com.javaup.resource.dto.RecoveryExecuteResult;
 import com.javaup.resource.dto.RecoveryPreviewResult;
 import com.javaup.resource.dto.RecoveryCaseResult;
+import com.javaup.resource.dto.RecoveryActionReconcileRequest;
+import com.javaup.resource.dto.RecoveryActionResult;
 import com.javaup.resource.dto.RecoveryProposalCreateRequest;
 import com.javaup.resource.dto.RecoveryProposalExecuteRequest;
 import com.javaup.resource.dto.RecoveryProposalResult;
@@ -61,6 +63,21 @@ public class RecoveryController {
     ) {
         request.setProposalId(proposalId);
         return ApiResponse.success(recoveryProposalService.execute(request));
+    }
+
+    @GetMapping("/actions/{actionRequestId}")
+    public ApiResponse<RecoveryActionResult> getAction(
+            @PathVariable("actionRequestId") String actionRequestId
+    ) {
+        return ApiResponse.success(recoveryProposalService.findAction(actionRequestId));
+    }
+
+    @PostMapping("/actions/{actionRequestId}/reconcile")
+    public ApiResponse<RecoveryActionResult> reconcileAction(
+            @PathVariable("actionRequestId") String actionRequestId,
+            @RequestBody RecoveryActionReconcileRequest request
+    ) {
+        return ApiResponse.success(recoveryProposalService.reconcileAction(actionRequestId, request));
     }
 
     @PostMapping("/dead-letter/preview")

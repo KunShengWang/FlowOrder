@@ -117,6 +117,10 @@ public class RecoveryCaseResult {
         private String targetKey;
         private Integer status;
         private String statusName;
+        private String executionOwner;
+        private LocalDateTime executionLeaseUntil;
+        private LocalDateTime lastHeartbeatAt;
+        private Integer reconcileCount;
         private String lastError;
         private LocalDateTime updatedAt;
     }
