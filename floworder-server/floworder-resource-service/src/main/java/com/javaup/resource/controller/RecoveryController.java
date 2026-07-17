@@ -5,8 +5,12 @@ import com.javaup.resource.dto.RecoveryDeadLetterRequest;
 import com.javaup.resource.dto.RecoveryExecuteResult;
 import com.javaup.resource.dto.RecoveryPreviewResult;
 import com.javaup.resource.dto.RecoveryCaseResult;
+import com.javaup.resource.dto.RecoveryProposalCreateRequest;
+import com.javaup.resource.dto.RecoveryProposalExecuteRequest;
+import com.javaup.resource.dto.RecoveryProposalResult;
 import com.javaup.resource.dto.ReservationRecoveryCheckResult;
 import com.javaup.resource.service.RecoveryCaseService;
+import com.javaup.resource.service.RecoveryProposalService;
 import com.javaup.resource.service.RecoveryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -26,12 +30,37 @@ public class RecoveryController {
 
     private final RecoveryCaseService recoveryCaseService;
 
+    private final RecoveryProposalService recoveryProposalService;
+
     @GetMapping("/cases/inspect")
     public ApiResponse<RecoveryCaseResult> inspectCase(
             @RequestParam("identifierType") String identifierType,
             @RequestParam("identifierValue") String identifierValue
     ) {
         return ApiResponse.success(recoveryCaseService.inspect(identifierType, identifierValue));
+    }
+
+    @PostMapping("/proposals")
+    public ApiResponse<RecoveryProposalResult> createProposal(
+            @RequestBody RecoveryProposalCreateRequest request
+    ) {
+        return ApiResponse.success(recoveryProposalService.create(request));
+    }
+
+    @GetMapping("/proposals/{proposalId}")
+    public ApiResponse<RecoveryProposalResult> getProposal(
+            @PathVariable("proposalId") String proposalId
+    ) {
+        return ApiResponse.success(recoveryProposalService.find(proposalId));
+    }
+
+    @PostMapping("/proposals/{proposalId}/execute")
+    public ApiResponse<RecoveryProposalResult> executeProposal(
+            @PathVariable("proposalId") String proposalId,
+            @RequestBody RecoveryProposalExecuteRequest request
+    ) {
+        request.setProposalId(proposalId);
+        return ApiResponse.success(recoveryProposalService.execute(request));
     }
 
     @PostMapping("/dead-letter/preview")

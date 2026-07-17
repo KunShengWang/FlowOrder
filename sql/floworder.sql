@@ -5,6 +5,7 @@ CREATE DATABASE IF NOT EXISTS floworder
 USE floworder;
 
 DROP TABLE IF EXISTS fo_order_status_log;
+DROP TABLE IF EXISTS fo_recovery_proposal;
 DROP TABLE IF EXISTS fo_recovery_action_log;
 DROP TABLE IF EXISTS fo_mq_dead_letter;
 DROP TABLE IF EXISTS fo_mq_consume_log;
@@ -214,6 +215,39 @@ CREATE TABLE fo_recovery_action_log (
    KEY idx_target (target_type, target_key),
    KEY idx_status_created (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='恢复动作审计日志';
+
+CREATE TABLE fo_recovery_proposal (
+   id BIGINT NOT NULL PRIMARY KEY,
+   proposal_id VARCHAR(128) NOT NULL COMMENT '不可变预演标识',
+   proposal_version INT NOT NULL DEFAULT 1 COMMENT '预演版本',
+   action_request_id VARCHAR(128) NOT NULL COMMENT '绑定的副作用命令幂等号',
+   case_key VARCHAR(128) NOT NULL COMMENT '案例业务键',
+   identifier_type VARCHAR(32) NOT NULL COMMENT '创建预演使用的标识类型',
+   identifier_value VARCHAR(128) NOT NULL COMMENT '创建预演使用的标识值',
+   action_type VARCHAR(64) NOT NULL COMMENT '动作类型，V1仅REPLAY',
+   target_type VARCHAR(64) NOT NULL COMMENT '目标类型',
+   target_key VARCHAR(128) NOT NULL COMMENT '目标键',
+   state_fingerprint CHAR(64) NOT NULL COMMENT '预演时业务状态指纹',
+   effects_digest CHAR(64) NOT NULL COMMENT '影响列表摘要',
+   warnings_digest CHAR(64) NOT NULL COMMENT '警告列表摘要',
+   preview_digest CHAR(64) NOT NULL COMMENT '目标、版本、指纹、影响、警告与有效期的规范化摘要',
+   can_execute TINYINT NOT NULL DEFAULT 0 COMMENT '预演时是否满足领域规则',
+   status TINYINT NOT NULL DEFAULT 0 COMMENT '0有效 10已审批 20拒绝 30过期 40状态漂移失效',
+   effects_json TEXT NOT NULL COMMENT '不可变影响快照',
+   warnings_json TEXT NOT NULL COMMENT '不可变警告快照',
+   suggested_reason VARCHAR(512) DEFAULT NULL COMMENT 'Agent建议理由',
+   approval_id VARCHAR(128) DEFAULT NULL COMMENT 'enterprise-agent审批标识',
+   approved_by VARCHAR(128) DEFAULT NULL COMMENT '可信审批人',
+   approval_comment VARCHAR(512) DEFAULT NULL COMMENT '人工审批意见',
+   approved_at DATETIME DEFAULT NULL,
+   expires_at DATETIME NOT NULL,
+   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+   UNIQUE KEY uk_proposal_id (proposal_id),
+   UNIQUE KEY uk_proposal_action_request (action_request_id),
+   KEY idx_proposal_case (case_key, created_at),
+   KEY idx_proposal_status_expire (status, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='恢复预演与审批事实';
 
 CREATE TABLE fo_mq_consume_log (
     id BIGINT NOT NULL PRIMARY KEY,

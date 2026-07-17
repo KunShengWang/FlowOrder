@@ -22,7 +22,7 @@ FlowOrder：高并发预约交易与履约一致性平台
 
 4. 建立订单履约状态机，订单确认时将锁定库存转为成交库存，订单取消/超时时释放库存和用户额度，并通过 requestId 查询最终履约状态。
 
-5. 设计最小恢复控制面，对死信恢复采用 preview -> execute 两阶段操作，使用 actionRequestId 保证恢复动作幂等，并记录 operator、reason、预览结果和执行结果，提升异常恢复可审计性。
+5. 设计不可变 Proposal -> 人工审批 -> 幂等执行 -> 业务回查的受控恢复闭环，由 FlowOrder 持有 Proposal 与 Action 权威状态；分离 proposalId/actionRequestId，审批绑定版本、状态指纹和影响摘要，并区分命令提交与业务收敛结果。
 
 面试展开关键词：
 
@@ -37,7 +37,9 @@ DLQ 恢复
 有界线程池
 订单状态机
 库存恒等式
-preview/execute 恢复控制面
+Proposal 版本化审批
+actionRequestId 业务幂等
+命令状态与业务结果分离
 ```
 
 不要写：
