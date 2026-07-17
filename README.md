@@ -4,7 +4,7 @@ FlowOrder 是一个面向 Java 后端简历和面试的高并发预约交易与�
 
 项目围绕“预约准入 -> 异步受理 -> 库存预扣 -> 可靠下单 -> 订单履约 -> 异常恢复”构建闭环，重点证明并发正确性、可靠消息、最终一致性、线程池治理、压测验证和故障恢复能力。
 
-> 当前状态：主体功能已收口，V7-lite / V8 / V9-lite / V10-core / V12 证据链和 OrderCare M0.5 恢复基线已完成。后续不再扩普通业务模块，只做正确性修复、Agent 受控集成和面试复盘。
+> 当前状态：主体功能已收口，V7-lite / V8 / V9-lite / V10-core / V12 证据链、OrderCare M0.5 恢复基线和 M1 只读案例诊断契约已完成。后续不再扩普通业务模块，只做正确性修复、Agent 受控集成和面试复盘。
 
 ## 项目定位
 
@@ -235,10 +235,13 @@ fo_mq_outbox：创建命令和结果消息均 SENT
 6. OrderCare M0.5 恢复基线
    [docs/reports/ordercare/m0.5-recovery-baseline.md](docs/reports/ordercare/m0.5-recovery-baseline.md)
 
-7. 简历与面试最终稿
+7. OrderCare M1 只读案例诊断
+   [docs/reports/ordercare/m1-case-diagnosis.md](docs/reports/ordercare/m1-case-diagnosis.md)
+
+8. 简历与面试最终稿
    [docs/resume/floworder-interview-guide.md](docs/resume/floworder-interview-guide.md)
 
-8. Apifox / OpenAPI 接口集合
+9. Apifox / OpenAPI 接口集合
    [apifox/floworder.openapi.json](apifox/floworder.openapi.json)
 
 早期 V8 实验过程记录仍保留在 `docs/reports/v8`，其中包含中间态问题和排查过程。判断最终项目状态时，以 `docs/reports/v12`、`docs/architecture`、`docs/resume` 和当前代码为准。

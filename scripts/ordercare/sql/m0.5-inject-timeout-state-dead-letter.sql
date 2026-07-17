@@ -4,6 +4,7 @@ SET @request_row_id = 9000000000000503;
 SET @deduct_row_id = 9000000000000504;
 SET @dead_letter_id = 9000000000000505;
 SET @outbox_id = 9000000000000506;
+SET @order_row_id = 9000000000000508;
 SET @request_id = 'ORDERCARE-M05-REQUEST';
 SET @trace_id = 'ORDERCARE-M05-TRACE';
 SET @order_no = 'ORDERCARE-M05-ORDER';
@@ -51,6 +52,17 @@ INSERT INTO fo_reservation_request (
     @request_row_id, @request_id, @trace_id, 9000000000000507, 1, @stock_item_id,
     3, @order_no, 20, 10, 0,
     0, 0, NOW(), NOW()
+);
+
+-- 订单服务已完成超时终态；资源服务因为状态消息进入死信而仍停留在 RESERVED。
+INSERT INTO fo_reservation_order (
+    id, order_no, user_id, resource_id, stock_item_id,
+    quantity, status, request_id, deduct_no, expire_time,
+    cancel_reason, version, created_at, updated_at, deleted
+) VALUES (
+    @order_row_id, @order_no, 9000000000000507, 1, @stock_item_id,
+    3, 40, @request_id, @deduct_no, DATE_SUB(NOW(), INTERVAL 5 MINUTE),
+    'OrderCare fixture timeout', 1, DATE_SUB(NOW(), INTERVAL 15 MINUTE), NOW(), 0
 );
 
 INSERT INTO fo_stock_deduct_record (

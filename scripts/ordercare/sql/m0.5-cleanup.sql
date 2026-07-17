@@ -10,6 +10,10 @@ DELETE FROM fo_mq_outbox
 WHERE id = 9000000000000506
    OR message_id = 'ORDERCARE-M05-STATE-MESSAGE';
 
+DELETE FROM fo_reservation_order
+WHERE id = 9000000000000508
+   OR request_id = 'ORDERCARE-M05-REQUEST';
+
 DELETE FROM fo_stock_deduct_record
 WHERE deduct_no = 'ORDERCARE-M05-DEDUCT';
 

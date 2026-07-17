@@ -8,6 +8,16 @@ FROM fo_reservation_request
 WHERE request_id = 'ORDERCARE-M05-REQUEST';
 
 SELECT
+    id,
+    order_no,
+    request_id,
+    status AS order_status,
+    deduct_no,
+    updated_at
+FROM fo_reservation_order
+WHERE request_id = 'ORDERCARE-M05-REQUEST';
+
+SELECT
     deduct_no,
     status AS deduct_status,
     release_reason,
