@@ -23,13 +23,14 @@ public class MqDeadLetterAdminController {
 
     @GetMapping
     public ApiResponse<List<MqDeadLetterAdminDto>> find(
-            @RequestParam(required = false) Integer status,
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(name = "status", required = false) Integer status,
+            @RequestParam(name = "limit", defaultValue = "100") int limit) {
         return ApiResponse.success(deadLetterService.find(status, limit));
     }
 
     @GetMapping("/{id}")
-    public ApiResponse<MqDeadLetterAdminDto> findById(@PathVariable Long id) {
+    public ApiResponse<MqDeadLetterAdminDto> findById(
+            @PathVariable("id") Long id) {
         return ApiResponse.success(deadLetterService.findById(id));
     }
 
@@ -37,17 +38,19 @@ public class MqDeadLetterAdminController {
      * 人工重放
      */
     @PostMapping("/{id}/replay")
-    public ApiResponse<Void> replay(@PathVariable Long id, @RequestParam String operator) {
+    public ApiResponse<Void> replay(
+            @PathVariable("id") Long id,
+            @RequestParam("operator") String operator) {
         deadLetterService.replay(id, operator);
         return ApiResponse.success();
     }
 
     @PostMapping("/{id}/ignore")
     public ApiResponse<Void> ignore(
-            @PathVariable Long id,
-            @RequestParam String operator,
-            @RequestParam String reason,
-            @RequestParam(defaultValue = "false") boolean force) {
+            @PathVariable("id") Long id,
+            @RequestParam("operator") String operator,
+            @RequestParam("reason") String reason,
+            @RequestParam(name = "force", defaultValue = "false") boolean force) {
         deadLetterService.ignore(id, operator, reason, force);
         return ApiResponse.success();
     }

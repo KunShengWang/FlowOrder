@@ -32,7 +32,14 @@ public interface MqDeadLetterService {
 
     void ignore(Long id, String operator, String reason, boolean force);
 
-    void recoverStaleReplaying(LocalDateTime deadline, int limit);
+    /**
+     * Recover stale replay leases and return the number of records whose state
+     * was actually changed by this scanner invocation.
+     *
+     * <p>The count is deliberately based on the database CAS result, so two
+     * service instances scanning the same row cannot both report ownership.</p>
+     */
+    int recoverStaleReplaying(LocalDateTime deadline, int limit);
 
     long countUnresolved();
 }

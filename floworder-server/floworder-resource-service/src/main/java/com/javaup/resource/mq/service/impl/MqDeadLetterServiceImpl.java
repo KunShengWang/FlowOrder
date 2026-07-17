@@ -207,7 +207,7 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
     }
 
     @Override
-    public void recoverStaleReplaying(LocalDateTime deadline, int limit) {
+    public int recoverStaleReplaying(LocalDateTime deadline, int limit) {
         int safeLimit = Math.min(Math.max(limit, 1), 200);
 
         List<MqDeadLetterEntity> records = deadLetterMapper.selectList(
@@ -218,11 +218,16 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
                         .last("limit " + safeLimit)
         );
 
+        int recovered = 0;
         for (MqDeadLetterEntity record : records) {
-            transactionTemplate.executeWithoutResult(
+            Boolean changed = transactionTemplate.execute(
                     status -> recoverOne(record.getId())
             );
+            if (Boolean.TRUE.equals(changed)) {
+                recovered++;
+            }
         }
+        return recovered;
     }
 
     @Override
@@ -234,17 +239,16 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
         );
     }
 
-    private void recoverOne(Long id) {
+    private boolean recoverOne(Long id) {
         MqDeadLetterEntity dead = deadLetterMapper.selectById(id);
         if (dead == null
                 || !Objects.equals(dead.getStatus(), STATUS_REPLAYING)) {
-            return;
+            return false;
         }
 
         if (isBusinessConverged(dead)) {
-            resolve(dead.getDeadQueue(), dead.getMessageId(), null,
-                    "扫描确认业务状态已经收敛");
-            return;
+            return resolve(dead.getDeadQueue(), dead.getMessageId(), null,
+                    "扫描确认业务状态已经收敛") > 0;
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -274,12 +278,13 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
                                     "订单创建死信重放确认超时")
             );
         }
+        return rows == 1;
     }
 
-    private void resolve(String queue, String messageId,
-                         String bizKey, String note) {
+    private int resolve(String queue, String messageId,
+                        String bizKey, String note) {
         LocalDateTime now = LocalDateTime.now();
-        deadLetterMapper.update(
+        return deadLetterMapper.update(
                 null,
                 Wrappers.<MqDeadLetterEntity>lambdaUpdate()
                         .eq(MqDeadLetterEntity::getDeadQueue, queue)

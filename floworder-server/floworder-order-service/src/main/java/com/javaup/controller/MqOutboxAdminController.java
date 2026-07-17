@@ -23,25 +23,27 @@ public class MqOutboxAdminController {
 
     @GetMapping("/dead")
     public ApiResponse<List<MqOutboxAdminDto>> findDead(
-            @RequestParam(defaultValue = "100") int limit) {
+            @RequestParam(name = "limit", defaultValue = "100") int limit) {
         return ApiResponse.success(outboxService.findDead(limit));
     }
 
     @PostMapping("/dead/{messageId}/retry")
     public ApiResponse<Void> retryDead(
-            @PathVariable String messageId) {
+            @PathVariable("messageId") String messageId) {
         outboxService.retryDead(messageId);
         return ApiResponse.success();
     }
 
     @PostMapping("/sent/{messageId}/replay")
-    public ApiResponse<Void> replaySent(@PathVariable String messageId) {
+    public ApiResponse<Void> replaySent(
+            @PathVariable("messageId") String messageId) {
         outboxService.replaySent(messageId);
         return ApiResponse.success();
     }
 
     @PostMapping("/consumer-dead/{messageId}/replay")
-    public ApiResponse<Void> replayConsumerDead(@PathVariable String messageId) {
+    public ApiResponse<Void> replayConsumerDead(
+            @PathVariable("messageId") String messageId) {
         outboxService.replayConsumerDead(messageId);
         return ApiResponse.success();
     }

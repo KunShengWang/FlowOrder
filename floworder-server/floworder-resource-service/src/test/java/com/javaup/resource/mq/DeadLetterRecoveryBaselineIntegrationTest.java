@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.client.OrderMqAdminClient;
 import com.javaup.common.ApiResponse;
+import com.javaup.dto.OrderCreateResultMessage;
 import com.javaup.dto.OrderStateChangedMessage;
 import com.javaup.exception.BizException;
 import com.javaup.resource.entity.MqConsumeLogEntity;
@@ -18,13 +19,18 @@ import com.javaup.resource.mapper.ReservationRequestMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.mapper.UserReservationQuotaMapper;
+import com.javaup.resource.mq.consumer.OrderResultConsumer;
+import com.javaup.resource.mq.consumer.OrderStateConsumer;
 import com.javaup.resource.mq.service.MqDeadLetterService;
 import com.javaup.resource.mq.service.OrderStateMessageService;
+import com.rabbitmq.client.Channel;
 import jakarta.annotation.Resource;
 import org.redisson.api.RedissonClient;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -41,9 +47,12 @@ import java.util.concurrent.TimeUnit;
 import static com.javaup.constant.OrderMqConstant.*;
 import static com.javaup.enums.OrderStatusEnum.RESERVED;
 import static com.javaup.enums.OrderStatusEnum.TIMEOUT;
+import static com.javaup.resource.enums.StockDeductStatusEnum.MANUAL_REVIEW;
 import static com.javaup.resource.enums.StockDeductStatusEnum.ORDER_CREATED;
+import static com.javaup.resource.enums.StockDeductStatusEnum.PRE_DEDUCTED;
 import static com.javaup.resource.enums.StockDeductStatusEnum.RELEASED;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,6 +84,12 @@ class DeadLetterRecoveryBaselineIntegrationTest {
 
     @Resource
     private OrderStateMessageService messageService;
+
+    @Resource
+    private OrderStateConsumer stateConsumer;
+
+    @Resource
+    private OrderResultConsumer resultConsumer;
 
     @Resource
     private MqDeadLetterMapper deadLetterMapper;
@@ -146,17 +161,44 @@ class DeadLetterRecoveryBaselineIntegrationTest {
         assertEquals(DEAD_REPLAYING, replaying.getStatus());
         assertEquals(1, replaying.getReplayCount());
 
-        assertEquals(fixture.stockItemId(), messageService.handle(message));
-        deadLetterService.resolveOrderState(message);
+        Channel firstDelivery = consumeState(message, 1L);
 
         // 模拟 RabbitMQ 重复投递同一 messageId；业务消费者和死信关闭都必须幂等。
-        assertEquals(fixture.stockItemId(), messageService.handle(message));
-        deadLetterService.resolveOrderState(message);
+        Channel duplicateDelivery = consumeState(message, 2L);
 
         assertEquals(DEAD_RESOLVED,
                 deadLetterMapper.selectById(deadLetter.getId()).getStatus());
         assertRecovered(fixture);
         assertEquals(1L, consumeLogCount(fixture.deductNo()));
+        verify(firstDelivery).basicAck(1L, false);
+        verify(duplicateDelivery).basicAck(2L, false);
+        verify(orderMqAdminClient, times(1))
+                .replayConsumerDead(message.getMessageId());
+    }
+
+    @Test
+    void failedResultReplayShouldReleaseInventoryAndRemainIdempotent()
+            throws Exception {
+        Fixture fixture = insertFixture(PRE_DEDUCTED.getCode());
+        OrderCreateResultMessage message = failedResultMessage(fixture);
+        MqDeadLetterEntity deadLetter = insertResultDeadLetter(
+                message, DEAD_PENDING, null);
+        when(orderMqAdminClient.replayConsumerDead(message.getMessageId()))
+                .thenReturn(ApiResponse.success());
+
+        deadLetterService.replay(deadLetter.getId(), "ordercare-result-baseline");
+
+        assertEquals(DEAD_REPLAYING,
+                deadLetterMapper.selectById(deadLetter.getId()).getStatus());
+        Channel firstDelivery = consumeResult(message, 11L);
+        Channel duplicateDelivery = consumeResult(message, 12L);
+
+        assertEquals(DEAD_RESOLVED,
+                deadLetterMapper.selectById(deadLetter.getId()).getStatus());
+        assertInventoryReleased(fixture);
+        assertEquals(1L, consumeLogCount(fixture.deductNo()));
+        verify(firstDelivery).basicAck(11L, false);
+        verify(duplicateDelivery).basicAck(12L, false);
         verify(orderMqAdminClient, times(1))
                 .replayConsumerDead(message.getMessageId());
     }
@@ -248,6 +290,46 @@ class DeadLetterRecoveryBaselineIntegrationTest {
         assertNotRecovered(fixture);
     }
 
+    @Test
+    void concurrentStaleScannersShouldTransitionCreateOnlyOnceAndRestoreManualReview()
+            throws Exception {
+        Fixture fixture = insertFixture(PRE_DEDUCTED.getCode());
+        MqDeadLetterEntity deadLetter = insertCreateDeadLetter(
+                fixture,
+                DEAD_REPLAYING,
+                LocalDateTime.now().minusMinutes(10)
+        );
+        LocalDateTime deadline = LocalDateTime.now().minusMinutes(5);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<Integer>> scans = List.of(
+                    executor.submit(() -> scanAfterBarrier(deadline, ready, start)),
+                    executor.submit(() -> scanAfterBarrier(deadline, ready, start))
+            );
+
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            int changed = 0;
+            for (Future<Integer> scan : scans) {
+                changed += scan.get(10, TimeUnit.SECONDS);
+            }
+            assertEquals(1, changed,
+                    "两个扫描器只能有一个通过状态 CAS 改变该死信");
+        } finally {
+            executor.shutdownNow();
+        }
+
+        MqDeadLetterEntity actual = deadLetterMapper.selectById(deadLetter.getId());
+        StockDeductRecordEntity record = findDeductRecord(fixture.deductNo());
+        assertEquals(DEAD_PENDING, actual.getStatus());
+        assertEquals("重放结果确认超时", actual.getLastError());
+        assertEquals(MANUAL_REVIEW.getCode(), record.getStatus());
+        assertEquals("订单创建死信重放确认超时", record.getLastError());
+    }
+
     private boolean replayAfterBarrier(
             Long deadLetterId,
             CountDownLatch ready,
@@ -263,7 +345,21 @@ class DeadLetterRecoveryBaselineIntegrationTest {
         }
     }
 
+    private int scanAfterBarrier(
+            LocalDateTime deadline,
+            CountDownLatch ready,
+            CountDownLatch start
+    ) throws InterruptedException {
+        ready.countDown();
+        start.await();
+        return deadLetterService.recoverStaleReplaying(deadline, 100);
+    }
+
     private Fixture insertFixture() {
+        return insertFixture(ORDER_CREATED.getCode());
+    }
+
+    private Fixture insertFixture(int deductStatus) {
         String suffix = UUID.randomUUID().toString();
         long stockItemId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
         LocalDateTime now = LocalDateTime.now();
@@ -294,7 +390,7 @@ class DeadLetterRecoveryBaselineIntegrationTest {
         record.setStockItemId(stockItemId);
         record.setQuantity(3);
         record.setRequestId("M05-REQUEST-" + suffix);
-        record.setStatus(ORDER_CREATED.getCode());
+        record.setStatus(deductStatus);
         record.setExpireTime(now.plusMinutes(10));
         record.setCreatedAt(now);
         record.setUpdatedAt(now);
@@ -363,6 +459,44 @@ class DeadLetterRecoveryBaselineIntegrationTest {
         return message;
     }
 
+    private OrderCreateResultMessage failedResultMessage(Fixture fixture) {
+        OrderCreateResultMessage message = new OrderCreateResultMessage();
+        message.setMessageId("M05-RESULT-" + UUID.randomUUID());
+        message.setTraceId("M05-TRACE-RESULT-" + UUID.randomUUID());
+        message.setEventType(ORDER_CREATE_FAILED);
+        message.setOccurredAt(LocalDateTime.now());
+        message.setRequestId(fixture.requestId());
+        message.setDeductNo(fixture.deductNo());
+        message.setOrderNo(fixture.orderNo());
+        message.setSuccess(false);
+        message.setErrorMessage("OrderCare injected order-create failure");
+        return message;
+    }
+
+    private Channel consumeState(OrderStateChangedMessage message, long deliveryTag)
+            throws Exception {
+        Channel channel = mock(Channel.class);
+        MessageProperties properties = new MessageProperties();
+        properties.setDeliveryTag(deliveryTag);
+        stateConsumer.consume(
+                new Message(objectMapper.writeValueAsBytes(message), properties),
+                channel
+        );
+        return channel;
+    }
+
+    private Channel consumeResult(OrderCreateResultMessage message, long deliveryTag)
+            throws Exception {
+        Channel channel = mock(Channel.class);
+        MessageProperties properties = new MessageProperties();
+        properties.setDeliveryTag(deliveryTag);
+        resultConsumer.consume(
+                new Message(objectMapper.writeValueAsBytes(message), properties),
+                channel
+        );
+        return channel;
+    }
+
     private MqDeadLetterEntity insertStateDeadLetter(
             OrderStateChangedMessage message,
             int status,
@@ -389,20 +523,94 @@ class DeadLetterRecoveryBaselineIntegrationTest {
         return deadLetter;
     }
 
-    private void assertRecovered(Fixture fixture) {
-        StockItemEntity stock = stockItemMapper.selectById(fixture.stockItemId());
-        StockDeductRecordEntity record = deductRecordMapper.selectOne(
-                Wrappers.<StockDeductRecordEntity>lambdaQuery()
-                        .eq(StockDeductRecordEntity::getDeductNo, fixture.deductNo())
+    private MqDeadLetterEntity insertResultDeadLetter(
+            OrderCreateResultMessage message,
+            int status,
+            LocalDateTime replayedAt
+    ) throws Exception {
+        return insertDeadLetter(
+                message.getMessageId(),
+                ORDER_RESULT_DLQ,
+                ORDER_SERVICE,
+                message.getEventType(),
+                message.getDeductNo(),
+                ORDER_RESULT_EXCHANGE,
+                ORDER_RESULT_ROUTING_KEY,
+                objectMapper.writeValueAsString(message),
+                status,
+                replayedAt
         );
+    }
+
+    private MqDeadLetterEntity insertCreateDeadLetter(
+            Fixture fixture,
+            int status,
+            LocalDateTime replayedAt
+    ) {
+        return insertDeadLetter(
+                "M05-CREATE-" + UUID.randomUUID(),
+                ORDER_CREATE_DLQ,
+                RESOURCE_SERVICE,
+                ORDER_CREATE_COMMAND,
+                fixture.deductNo(),
+                ORDER_CREATE_EXCHANGE,
+                ORDER_CREATE_ROUTING_KEY,
+                "{\"fixture\":\"ordercare-m0.5\"}",
+                status,
+                replayedAt
+        );
+    }
+
+    private MqDeadLetterEntity insertDeadLetter(
+            String messageId,
+            String deadQueue,
+            String producerService,
+            String messageType,
+            String bizKey,
+            String exchangeName,
+            String routingKey,
+            String content,
+            int status,
+            LocalDateTime replayedAt
+    ) {
+        LocalDateTime now = LocalDateTime.now();
+        MqDeadLetterEntity deadLetter = new MqDeadLetterEntity();
+        deadLetter.setMessageId(messageId);
+        deadLetter.setDeadQueue(deadQueue);
+        deadLetter.setProducerService(producerService);
+        deadLetter.setMessageType(messageType);
+        deadLetter.setBizKey(bizKey);
+        deadLetter.setExchangeName(exchangeName);
+        deadLetter.setRoutingKey(routingKey);
+        deadLetter.setContent(content);
+        deadLetter.setDeathReason("OrderCare M0.5 injected failure");
+        deadLetter.setStatus(status);
+        deadLetter.setReplayCount(status == DEAD_REPLAYING ? 1 : 0);
+        deadLetter.setReplayedAt(replayedAt);
+        deadLetter.setCreatedAt(now);
+        deadLetter.setUpdatedAt(now);
+        assertEquals(1, deadLetterMapper.insert(deadLetter));
+        deadLetterIds.add(deadLetter.getId());
+        return deadLetter;
+    }
+
+    private void assertRecovered(Fixture fixture) {
+        assertInventoryReleased(fixture);
+        ReservationRequestEntity request =
+                reservationRequestMapper.selectById(fixture.reservationRequestId());
+        assertEquals(TIMEOUT.getCode(), request.getOrderStatus());
+        assertEquals(ORDER_TIMEOUT, request.getLatestOrderEventType());
+    }
+
+    private void assertInventoryReleased(Fixture fixture) {
+        StockItemEntity stock = stockItemMapper.selectById(fixture.stockItemId());
+        StockDeductRecordEntity record = findDeductRecord(fixture.deductNo());
         UserReservationQuotaEntity quota = quotaMapper.selectOne(
                 Wrappers.<UserReservationQuotaEntity>lambdaQuery()
                         .eq(UserReservationQuotaEntity::getStockItemId,
                                 fixture.stockItemId())
                         .eq(UserReservationQuotaEntity::getUserId, fixture.userId())
         );
-        ReservationRequestEntity request =
-                reservationRequestMapper.selectById(fixture.reservationRequestId());
 
         assertEquals(RELEASED.getCode(), record.getStatus());
         assertEquals(10, stock.getAvailableStock());
@@ -413,8 +621,13 @@ class DeadLetterRecoveryBaselineIntegrationTest {
                         + stock.getLockedStock()
                         + stock.getSoldStock());
         assertEquals(0, quota.getUsedQuantity());
-        assertEquals(TIMEOUT.getCode(), request.getOrderStatus());
-        assertEquals(ORDER_TIMEOUT, request.getLatestOrderEventType());
+    }
+
+    private StockDeductRecordEntity findDeductRecord(String deductNo) {
+        return deductRecordMapper.selectOne(
+                Wrappers.<StockDeductRecordEntity>lambdaQuery()
+                        .eq(StockDeductRecordEntity::getDeductNo, deductNo)
+        );
     }
 
     private void assertNotRecovered(Fixture fixture) {

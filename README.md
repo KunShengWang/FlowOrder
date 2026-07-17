@@ -4,7 +4,7 @@ FlowOrder 是一个面向 Java 后端简历和面试的高并发预约交易与�
 
 项目围绕“预约准入 -> 异步受理 -> 库存预扣 -> 可靠下单 -> 订单履约 -> 异常恢复”构建闭环，重点证明并发正确性、可靠消息、最终一致性、线程池治理、压测验证和故障恢复能力。
 
-> 当前状态：主体功能已收口，V7-lite / V8 / V9-lite / V10-core / V12 证据链已完成。后续不再扩普通业务模块，只做 bug 修复、事实修正和面试复盘。
+> 当前状态：主体功能已收口，V7-lite / V8 / V9-lite / V10-core / V12 证据链和 OrderCare M0.5 恢复基线已完成。后续不再扩普通业务模块，只做正确性修复、Agent 受控集成和面试复盘。
 
 ## 项目定位
 
@@ -68,6 +68,7 @@ FlowOrder 不是商城、运营后台、支付系统、Agent 项目或云原生�
 | `jmeter` | 压测脚本与实验材料 |
 | `apifox` | OpenAPI / Apifox 接口集合 |
 | `docs` | 架构图、验证报告、简历与面试材料 |
+| `scripts/ordercare` | OrderCare 恢复基线测试、异常注入、E2E 查询与清理脚本 |
 
 ## 当前核心链路
 
@@ -231,10 +232,13 @@ fo_mq_outbox：创建命令和结果消息均 SENT
 5. 订单超时关闭证据  
    [docs/reports/v12/04-timeout-close-evidence.md](docs/reports/v12/04-timeout-close-evidence.md)
 
-6. 简历与面试最终稿  
+6. OrderCare M0.5 恢复基线
+   [docs/reports/ordercare/m0.5-recovery-baseline.md](docs/reports/ordercare/m0.5-recovery-baseline.md)
+
+7. 简历与面试最终稿
    [docs/resume/floworder-interview-guide.md](docs/resume/floworder-interview-guide.md)
 
-7. Apifox / OpenAPI 接口集合  
+8. Apifox / OpenAPI 接口集合
    [apifox/floworder.openapi.json](apifox/floworder.openapi.json)
 
 早期 V8 实验过程记录仍保留在 `docs/reports/v8`，其中包含中间态问题和排查过程。判断最终项目状态时，以 `docs/reports/v12`、`docs/architecture`、`docs/resume` 和当前代码为准。
