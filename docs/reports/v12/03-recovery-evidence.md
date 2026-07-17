@@ -73,9 +73,9 @@ floworder.admin.enabled=false
 
 ```text
 execute 入口先根据 actionRequestId 查询恢复审计日志；
-如果同一个 actionRequestId、同一个目标、同一个动作已经 SUCCEEDED，
-直接返回 IDEMPOTENT_SUCCEEDED；
-只有不是已成功动作时，才重新 preview 当前死信状态。
+如果同一个 actionRequestId、同一个目标、同一个动作已经 SUBMITTED，
+直接返回 IDEMPOTENT_SUBMITTED；
+只有不是已提交动作时，才重新 preview 当前死信状态。
 ```
 
 新增测试：
@@ -101,12 +101,16 @@ BUILD SUCCESS
 
 | 验证点 | 结果 |
 | --- | --- |
-| 第一次 execute | 返回 `SUCCEEDED` |
-| 第二次相同 `actionRequestId` execute | 返回 `IDEMPOTENT_SUCCEEDED` |
+| 第一次 execute | 返回 `SUBMITTED` |
+| 第二次相同 `actionRequestId` execute | 返回 `IDEMPOTENT_SUBMITTED` |
 | 恢复动作执行次数 | `deadLetterService.ignore(...)` 只调用 1 次 |
 | 第二次是否重新读取死信状态 | 不重新读取，直接基于 actionLog 幂等返回 |
 
 结论：V10 execute 的 `actionRequestId` 幂等已经由代码路径和自动化测试共同验证。
+
+> M0.5 语义修订：历史实现曾使用 `SUCCEEDED` 表示“命令已提交”。当前已更名为
+> `SUBMITTED`，避免把接口受理误解为订单、库存和死信已经收敛；数据库状态码 20
+> 保持兼容。
 
 ## 5. 可用于简历的结论
 

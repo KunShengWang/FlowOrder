@@ -88,7 +88,7 @@ class RecoveryServiceImplTest {
     }
 
     @Test
-    void executeDeadLetterShouldReturnIdempotentSuccessWhenSameActionAlreadySucceeded() {
+    void executeDeadLetterShouldReturnIdempotentSubmittedWhenSameActionWasSubmitted() {
         long deadLetterId = 1L;
         String actionRequestId = "v10-execute-idem-test";
         String operator = "codex";
@@ -126,9 +126,9 @@ class RecoveryServiceImplTest {
                 reason
         ));
 
-        assertEquals("SUCCEEDED", first.getStatus());
-        assertEquals("IDEMPOTENT_SUCCEEDED", second.getStatus());
-        assertEquals("actionRequestId already succeeded", second.getMessage());
+        assertEquals("SUBMITTED", first.getStatus());
+        assertEquals("IDEMPOTENT_SUBMITTED", second.getStatus());
+        assertEquals("actionRequestId already submitted", second.getMessage());
         verify(deadLetterService, times(1)).findById(deadLetterId);
         verify(deadLetterService, times(1)).ignore(deadLetterId, operator, reason, true);
     }

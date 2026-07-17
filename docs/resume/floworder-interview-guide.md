@@ -50,7 +50,7 @@ FlowOrder 是一个面向高并发预约交易场景的后端项目，围绕预�
 | 确认成交 | `ORDER_CONFIRMED` 后预扣记录 `SOLD`，`locked -> sold` |
 | 取消释放 | `ORDER_CANCELLED` 后预扣记录 `RELEASED`，额度释放 |
 | 超时关闭 | `ORDER_TIMEOUT` 后订单 `TIMEOUT`，预扣 `RELEASED`，额度释放 |
-| V10 execute 幂等 | `RecoveryServiceImplTest` 验证第二次相同 `actionRequestId` 返回 `IDEMPOTENT_SUCCEEDED` |
+| V10 execute 幂等 | `RecoveryServiceImplTest` 验证第二次相同 `actionRequestId` 返回 `IDEMPOTENT_SUBMITTED`；业务收敛单独验证 |
 | 架构说明 | `docs/architecture/floworder-architecture.md` |
 
 证据文档：

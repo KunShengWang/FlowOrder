@@ -1891,7 +1891,14 @@
             "type": "string"
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "description": "恢复命令状态；SUBMITTED 只表示命令已提交，不表示业务已收敛",
+            "enum": [
+              "EXECUTING",
+              "SUBMITTED",
+              "FAILED",
+              "IDEMPOTENT_SUBMITTED"
+            ]
           },
           "message": {
             "type": "string"

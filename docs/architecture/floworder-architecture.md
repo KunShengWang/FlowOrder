@@ -138,17 +138,19 @@ sequenceDiagram
     Recovery-->>Admin: 返回 canExecute / effects / warnings
 
     Admin->>Recovery: execute(same actionRequestId)
-    Recovery->>DB: 优先检查 actionRequestId 是否已成功
-    alt 已成功
-        Recovery-->>Admin: IDEMPOTENT_SUCCEEDED
-    else 未成功
+    Recovery->>DB: 优先检查 actionRequestId 是否已提交
+    alt 已提交
+        Recovery-->>Admin: IDEMPOTENT_SUBMITTED
+    else 未提交
         Recovery->>DLQ: 校验当前死信是否可执行
         Recovery->>DB: actionLog PREVIEWED/NEW -> EXECUTING
         Recovery->>Domain: replay 或 ignore
-        Recovery->>DB: actionLog -> SUCCEEDED / FAILED
+        Recovery->>DB: actionLog -> SUBMITTED / FAILED
         Recovery-->>Admin: 执行结果
     end
 ```
+
+`SUBMITTED` 表示恢复命令已可靠提交，不等于订单、库存和死信已经完成业务收敛。
 
 恢复控制面原则：
 

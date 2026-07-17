@@ -1,5 +1,7 @@
 package com.javaup.resource.mq;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.client.OrderMqAdminClient;
 import com.javaup.dto.CreateOrderDto;
@@ -8,6 +10,7 @@ import com.javaup.dto.OrderCreateResultMessage;
 import com.javaup.dto.OrderStateChangedMessage;
 import com.javaup.exception.BizException;
 import com.javaup.resource.entity.MqDeadLetterEntity;
+import com.javaup.resource.entity.MqOutboxEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.mapper.MqDeadLetterMapper;
 import com.javaup.resource.mapper.MqOutboxMapper;
@@ -17,6 +20,7 @@ import com.javaup.resource.mq.service.impl.MqDeadLetterServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -26,7 +30,9 @@ import static com.javaup.constant.OrderMqConstant.*;
 import static com.javaup.resource.enums.StockDeductStatusEnum.RELEASED;
 import static com.javaup.resource.enums.StockDeductStatusEnum.SOLD;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -57,6 +63,19 @@ class MqDeadLetterServiceTest {
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(configuration, ""),
+                MqDeadLetterEntity.class
+        );
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(configuration, ""),
+                MqOutboxEntity.class
+        );
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(configuration, ""),
+                StockDeductRecordEntity.class
+        );
         service = new MqDeadLetterServiceImpl(
                 outboxService,
                 orderMqAdminClient,
@@ -108,8 +127,61 @@ class MqDeadLetterServiceTest {
                 "rejected"
         );
 
-        verify(deadLetterMapper).insert(any(MqDeadLetterEntity.class));
+        ArgumentCaptor<MqDeadLetterEntity> captor =
+                ArgumentCaptor.forClass(MqDeadLetterEntity.class);
+        verify(deadLetterMapper).insert(captor.capture());
         verifyNoInteractions(deductRecordMapper);
+        assertEquals("deduct-2", captor.getValue().getBizKey());
+        assertEquals(ORDER_SERVICE, captor.getValue().getProducerService());
+        assertEquals(ORDER_CREATE_SUCCEEDED, captor.getValue().getMessageType());
+    }
+
+    @Test
+    void stateDeadLetterShouldUseDeductNoAsBusinessKey() throws Exception {
+        OrderStateChangedMessage message = new OrderStateChangedMessage();
+        message.setMessageId("state-message-biz-key");
+        message.setEventType(ORDER_TIMEOUT);
+        message.setDeductNo("deduct-state-biz-key");
+
+        service.record(
+                ORDER_STATE_DLQ,
+                message.getMessageId(),
+                objectMapper.writeValueAsString(message),
+                "rejected"
+        );
+
+        ArgumentCaptor<MqDeadLetterEntity> captor =
+                ArgumentCaptor.forClass(MqDeadLetterEntity.class);
+        verify(deadLetterMapper).insert(captor.capture());
+        assertEquals(message.getDeductNo(), captor.getValue().getBizKey());
+        assertEquals(ORDER_SERVICE, captor.getValue().getProducerService());
+        assertEquals(ORDER_TIMEOUT, captor.getValue().getMessageType());
+    }
+
+    @Test
+    void malformedCreateMessageShouldRecoverBusinessKeyFromOutbox() {
+        MqOutboxEntity outbox = new MqOutboxEntity();
+        outbox.setMessageType(ORDER_CREATE_COMMAND);
+        outbox.setBizKey("deduct-from-outbox");
+        when(outboxMapper.selectOne(any())).thenReturn(outbox);
+        when(deductRecordMapper.update(any(), any())).thenReturn(1);
+
+        service.record(
+                ORDER_CREATE_DLQ,
+                "malformed-create-message",
+                "{not-json",
+                "rejected"
+        );
+
+        ArgumentCaptor<MqDeadLetterEntity> captor =
+                ArgumentCaptor.forClass(MqDeadLetterEntity.class);
+        verify(deadLetterMapper).insert(captor.capture());
+        assertEquals("deduct-from-outbox", captor.getValue().getBizKey());
+        assertEquals(ORDER_CREATE_COMMAND, captor.getValue().getMessageType());
+        assertNotNull(captor.getValue().getLastError());
+        assertTrue(captor.getValue().getLastError().startsWith(
+                "Create message cannot be parsed"
+        ));
     }
 
     @Test

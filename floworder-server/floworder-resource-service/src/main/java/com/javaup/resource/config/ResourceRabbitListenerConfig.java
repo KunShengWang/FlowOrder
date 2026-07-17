@@ -12,6 +12,15 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @Configuration
 public class ResourceRabbitListenerConfig {
 
+    private final boolean autoStartup;
+
+    public ResourceRabbitListenerConfig(
+            @Value("${spring.rabbitmq.listener.simple.auto-startup:true}")
+            boolean autoStartup
+    ) {
+        this.autoStartup = autoStartup;
+    }
+
     @Bean
     public ThreadPoolTaskExecutor orderResultConsumerExecutor(
             @Value("${floworder.thread-pool.order-result-consumer.core-size:2}") int coreSize,
@@ -105,6 +114,7 @@ public class ResourceRabbitListenerConfig {
         factory.setConcurrentConsumers(concurrentConsumers);// 并发消费者数
         factory.setMaxConcurrentConsumers(maxConcurrentConsumers);// 最大消费者数
         factory.setPrefetchCount(prefetch);// 每次预取消息数
+        factory.setAutoStartup(autoStartup);// 测试或维护窗口可统一关闭消费者
         return factory;
     }
 }

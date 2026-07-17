@@ -202,7 +202,7 @@ CREATE TABLE fo_recovery_action_log (
    action_type VARCHAR(64) NOT NULL COMMENT '动作类型：REPLAY/IGNORE/CHECK等',
    target_type VARCHAR(64) NOT NULL COMMENT '目标类型：DEAD_LETTER/RESERVATION等',
    target_key VARCHAR(128) NOT NULL COMMENT '目标主键或业务键',
-   status TINYINT NOT NULL DEFAULT 0 COMMENT '0已预览 10执行中 20成功 30失败',
+   status TINYINT NOT NULL DEFAULT 0 COMMENT '0已预览 10执行中 20已提交 30失败',
    operator VARCHAR(64) DEFAULT NULL COMMENT '操作人',
    reason VARCHAR(512) DEFAULT NULL COMMENT '操作原因',
    preview_result TEXT DEFAULT NULL COMMENT '预览结果快照',

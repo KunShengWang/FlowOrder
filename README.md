@@ -174,7 +174,8 @@ GET  /internal/recovery/reservation/check?requestId=xxx
 
 - `preview` 只判断可执行性和影响范围，不直接修改业务；
 - `execute` 必须携带 `actionRequestId`；
-- 相同 `actionRequestId` 成功后再次执行返回 `IDEMPOTENT_SUCCEEDED`；
+- 相同 `actionRequestId` 已提交后再次执行返回 `IDEMPOTENT_SUBMITTED`；
+- `SUBMITTED` 只表示恢复命令已经可靠提交，业务是否收敛需要独立回查；
 - 恢复动作写入 `fo_recovery_action_log`，记录 operator、reason、previewResult、executeResult；
 - recovery 不绕过领域服务直接修改订单和库存核心状态。
 
@@ -209,7 +210,7 @@ fo_mq_outbox：创建命令和结果消息均 SENT
 | 确认成交 | `fo_reservation_order.status=20`，预扣记录 `SOLD`，库存 `locked -> sold`，`diff=0` |
 | 取消释放 | `fo_reservation_order.status=30`，预扣记录 `RELEASED`，库存 `locked -> available`，额度释放 |
 | 超时关闭 | `fo_reservation_order.status=40`，`ORDER_TIMEOUT` Outbox `SENT`，消费成功，库存和额度释放 |
-| V10 execute 幂等 | `RecoveryServiceImplTest` 验证第二次相同 `actionRequestId` 返回 `IDEMPOTENT_SUCCEEDED` |
+| V10 execute 幂等 | `RecoveryServiceImplTest` 验证第二次相同 `actionRequestId` 返回 `IDEMPOTENT_SUBMITTED` |
 
 ## 文档入口
 

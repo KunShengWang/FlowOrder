@@ -23,7 +23,8 @@ public class RecoveryActionLogEntity {
     private String targetKey;
 
     /**
-     * 0 PREVIEWED, 10 EXECUTING, 20 SUCCEEDED, 30 FAILED。
+     * 0 PREVIEWED, 10 EXECUTING, 20 SUBMITTED, 30 FAILED。
+     * SUBMITTED 只表示命令已可靠提交，业务结果需要独立回查。
      */
     private Integer status;
 

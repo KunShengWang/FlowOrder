@@ -37,7 +37,10 @@ public class RecoveryServiceImpl implements RecoveryService {
 
     private static final int ACTION_PREVIEWED = 0;
     private static final int ACTION_EXECUTING = 10;
-    private static final int ACTION_SUCCEEDED = 20;
+    /**
+     * 恢复命令已经可靠提交，不代表订单、库存和死信已经完成业务收敛。
+     */
+    private static final int ACTION_SUBMITTED = 20;
     private static final int ACTION_FAILED = 30;
 
     private static final int DEAD_PENDING = 0;
@@ -96,8 +99,8 @@ public class RecoveryServiceImpl implements RecoveryService {
         RecoveryActionLogEntity existing = findActionLog(request.getActionRequestId());
         if (existing != null) {
             ensureSameAction(existing, request);
-            if (Objects.equals(existing.getStatus(), ACTION_SUCCEEDED)) {
-                return idempotentSuccess(existing);
+            if (Objects.equals(existing.getStatus(), ACTION_SUBMITTED)) {
+                return idempotentSubmitted(existing);
             }
         }
 
@@ -107,8 +110,8 @@ public class RecoveryServiceImpl implements RecoveryService {
         }
 
         RecoveryActionLogEntity log = prepareExecuteLog(request, preview);
-        if (Objects.equals(log.getStatus(), ACTION_SUCCEEDED)) {
-            return idempotentSuccess(log);
+        if (Objects.equals(log.getStatus(), ACTION_SUBMITTED)) {
+            return idempotentSubmitted(log);
         }
 
         RecoveryExecuteResult result = buildExecutingResult(request);
@@ -127,9 +130,9 @@ public class RecoveryServiceImpl implements RecoveryService {
             } else {
                 throw new BizException("不支持的恢复动作：" + request.getActionType());
             }
-            result.setStatus("SUCCEEDED");
+            result.setStatus("SUBMITTED");
             result.setExecutedAt(LocalDateTime.now());
-            markExecuteSucceeded(log.getId(), result);
+            markExecuteSubmitted(log.getId(), result);
             return result;
         } catch (RuntimeException exception) {
             result.setStatus("FAILED");
@@ -297,7 +300,7 @@ public class RecoveryServiceImpl implements RecoveryService {
         RecoveryActionLogEntity existing = findActionLog(request.getActionRequestId());
         if (existing != null) {
             ensureSameAction(existing, request);
-            if (Objects.equals(existing.getStatus(), ACTION_SUCCEEDED)) {
+            if (Objects.equals(existing.getStatus(), ACTION_SUBMITTED)) {
                 return existing;
             }
             if (Objects.equals(existing.getStatus(), ACTION_EXECUTING)) {
@@ -349,24 +352,24 @@ public class RecoveryServiceImpl implements RecoveryService {
         return result;
     }
 
-    private RecoveryExecuteResult idempotentSuccess(RecoveryActionLogEntity log) {
+    private RecoveryExecuteResult idempotentSubmitted(RecoveryActionLogEntity log) {
         RecoveryExecuteResult result = new RecoveryExecuteResult();
         result.setActionRequestId(log.getActionRequestId());
         result.setActionType(log.getActionType());
         result.setTargetType(log.getTargetType());
         result.setTargetKey(log.getTargetKey());
-        result.setStatus("IDEMPOTENT_SUCCEEDED");
-        result.setMessage("actionRequestId already succeeded");
+        result.setStatus("IDEMPOTENT_SUBMITTED");
+        result.setMessage("actionRequestId already submitted");
         result.setExecutedAt(log.getUpdatedAt());
         return result;
     }
 
-    private void markExecuteSucceeded(Long id, RecoveryExecuteResult result) {
+    private void markExecuteSubmitted(Long id, RecoveryExecuteResult result) {
         actionLogMapper.update(
                 null,
                 Wrappers.<RecoveryActionLogEntity>lambdaUpdate()
                         .eq(RecoveryActionLogEntity::getId, id)
-                        .set(RecoveryActionLogEntity::getStatus, ACTION_SUCCEEDED)
+                        .set(RecoveryActionLogEntity::getStatus, ACTION_SUBMITTED)
                         .set(RecoveryActionLogEntity::getExecuteResult, toJson(result))
                         .set(RecoveryActionLogEntity::getLastError, null)
                         .set(RecoveryActionLogEntity::getUpdatedAt, LocalDateTime.now())
