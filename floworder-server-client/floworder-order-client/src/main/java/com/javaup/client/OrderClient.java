@@ -3,6 +3,8 @@ package com.javaup.client;
 import com.javaup.common.ApiResponse;
 import com.javaup.constant.Constant;
 import com.javaup.dto.CreateOrderDto;
+import com.javaup.dto.OrderFactBatchRequest;
+import com.javaup.dto.OrderFactBatchResult;
 import com.javaup.dto.OrderQueryDto;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,4 +32,10 @@ public interface OrderClient {
      */
     @GetMapping("/order/query")
     ApiResponse<OrderQueryDto> queryByRequestId(@RequestParam("requestId") String requestId);
+
+    /**
+     * Bounded batch query for the internal incident fact service.
+     */
+    @PostMapping("/internal/orders/facts/query")
+    ApiResponse<OrderFactBatchResult> queryFacts(@RequestBody OrderFactBatchRequest request);
 }

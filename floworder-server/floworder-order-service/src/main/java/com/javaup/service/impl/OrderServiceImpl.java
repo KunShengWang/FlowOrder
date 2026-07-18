@@ -3,6 +3,9 @@ package com.javaup.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.javaup.dto.CreateOrderDto;
+import com.javaup.dto.OrderFactBatchRequest;
+import com.javaup.dto.OrderFactBatchResult;
+import com.javaup.dto.OrderFactItemDto;
 import com.javaup.dto.OrderQueryDto;
 import com.javaup.entity.ReservationOrderEntity;
 import com.javaup.exception.BizException;
@@ -16,7 +19,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeSet;
 
 import com.javaup.entity.OrderStatusLogEntity;
 
@@ -92,6 +99,33 @@ public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, Reserv
         return result;
     }
 
+    @Override
+    public OrderFactBatchResult queryFacts(OrderFactBatchRequest request) {
+        List<String> requestIds = normalizeRequestIds(request);
+        List<ReservationOrderEntity> orders = list(Wrappers.<ReservationOrderEntity>lambdaQuery()
+                .in(ReservationOrderEntity::getRequestId, requestIds)
+                .orderByAsc(ReservationOrderEntity::getRequestId));
+
+        Map<String, ReservationOrderEntity> byRequestId = new LinkedHashMap<>();
+        for (ReservationOrderEntity order : orders) {
+            byRequestId.putIfAbsent(order.getRequestId(), order);
+        }
+
+        List<OrderFactItemDto> items = requestIds.stream()
+                .map(requestId -> toFactItem(requestId, byRequestId.get(requestId)))
+                .toList();
+        List<String> missingRequestIds = items.stream()
+                .filter(item -> !Boolean.TRUE.equals(item.getExists()))
+                .map(OrderFactItemDto::getRequestId)
+                .toList();
+
+        OrderFactBatchResult result = new OrderFactBatchResult();
+        result.setObservedAt(LocalDateTime.now());
+        result.setItems(items);
+        result.setMissingRequestIds(missingRequestIds);
+        return result;
+    }
+
     /**
      * 根据 requestId 查询预约订单表
      */
@@ -99,6 +133,36 @@ public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, Reserv
         return getOne(Wrappers.<ReservationOrderEntity>lambdaQuery()
                 .eq(ReservationOrderEntity::getRequestId, requestId)
                 .last("limit 1"));
+    }
+
+    private List<String> normalizeRequestIds(OrderFactBatchRequest request) {
+        if (request == null || request.getRequestIds() == null) {
+            throw new BizException("requestIds must not be empty");
+        }
+        TreeSet<String> normalized = new TreeSet<>();
+        for (String requestId : request.getRequestIds()) {
+            if (!StringUtils.hasText(requestId)) {
+                throw new BizException("requestId must not be blank");
+            }
+            normalized.add(requestId.trim());
+        }
+        if (normalized.isEmpty() || normalized.size() > 100) {
+            throw new BizException("requestIds size must be between 1 and 100");
+        }
+        return List.copyOf(normalized);
+    }
+
+    private OrderFactItemDto toFactItem(String requestId, ReservationOrderEntity order) {
+        OrderFactItemDto item = new OrderFactItemDto();
+        item.setRequestId(requestId);
+        item.setExists(order != null);
+        if (order != null) {
+            item.setOrderNo(order.getOrderNo());
+            item.setDeductNo(order.getDeductNo());
+            item.setStatus(order.getStatus());
+            item.setUpdatedAt(order.getUpdatedAt());
+        }
+        return item;
     }
 
     private void checkCreateOrderDto(CreateOrderDto createOrderDto) {
