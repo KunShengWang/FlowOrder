@@ -10,5 +10,6 @@ public class ResourceScopeEnrichmentRequest {
     private String discoveryRequestId;
     private List<String> requestIds;
     private List<String> deductNos;
+    private List<Long> deadLetterIds;
     private List<IncidentAnomalyType> anomalyTypes;
 }

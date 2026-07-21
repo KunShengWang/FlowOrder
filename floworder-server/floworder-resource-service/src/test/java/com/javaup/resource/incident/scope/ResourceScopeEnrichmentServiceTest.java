@@ -102,6 +102,28 @@ class ResourceScopeEnrichmentServiceTest {
     }
 
     @Test
+    void explicitDeadLetterIdResolvesAuthoritativeDeductAndRequestScope() {
+        ResourceScopeEnrichmentRequest request = new ResourceScopeEnrichmentRequest();
+        request.setDiscoveryRequestId("discovery-dead-letter");
+        request.setDeadLetterIds(List.of(3L));
+        request.setAnomalyTypes(List.of(IncidentAnomalyType.DEAD_LETTER_PENDING));
+        when(deadLetterMapper.selectList(any())).thenReturn(
+                List.of(deadLetter("DEDUCT-1", "{}")),
+                List.of(deadLetter("DEDUCT-1", "{}")));
+        when(deductMapper.selectList(any())).thenReturn(List.of(deduct()));
+        when(stockMapper.selectList(any())).thenReturn(List.of(stock()));
+
+        var response = service.enrich(request);
+
+        assertThat(response.getItems()).singleElement().satisfies(item -> {
+            assertThat(item.getRequestId()).isEqualTo("REQ-1");
+            assertThat(item.getDeductNo()).isEqualTo("DEDUCT-1");
+            assertThat(item.getDeadLetters()).singleElement()
+                    .satisfies(dead -> assertThat(dead.getDeadLetterId()).isEqualTo(3L));
+        });
+    }
+
+    @Test
     void enrichmentContractIsReadOnly() throws Exception {
         Method method = ResourceScopeEnrichmentServiceImpl.class
                 .getMethod("enrich", ResourceScopeEnrichmentRequest.class);

@@ -52,14 +52,20 @@ public class ResourceScopeEnrichmentServiceImpl implements ResourceScopeEnrichme
     @Transactional(readOnly = true)
     public ResourceScopeEnrichmentResponse enrich(ResourceScopeEnrichmentRequest request) {
         Scope scope = normalize(request);
+        List<MqDeadLetterEntity> explicitDeadLetters = loadExplicitDeadLetters(scope.deadLetterIds());
+        TreeSet<String> resolvedDeductNos = new TreeSet<>(scope.deductNos());
+        explicitDeadLetters.stream().map(MqDeadLetterEntity::getBizKey)
+                .filter(StringUtils::hasText).forEach(resolvedDeductNos::add);
         Map<String, ReservationRequestEntity> reservations = loadReservations(scope.requestIds());
-        Map<String, StockDeductRecordEntity> deducts = loadDeducts(scope.requestIds(), scope.deductNos());
+        Map<String, StockDeductRecordEntity> deducts = loadDeducts(
+                scope.requestIds(), List.copyOf(resolvedDeductNos));
         Map<Long, StockItemEntity> stockItems = loadStockItems(deducts.values());
-        Map<String, List<MqDeadLetterEntity>> deadLetters = loadDeadLetters(deducts.values(), scope.deductNos());
+        Map<String, List<MqDeadLetterEntity>> deadLetters = loadDeadLetters(
+                deducts.values(), List.copyOf(resolvedDeductNos), explicitDeadLetters);
 
         TreeSet<String> itemKeys = new TreeSet<>();
         itemKeys.addAll(scope.requestIds().stream().map(value -> "R|" + value).toList());
-        itemKeys.addAll(scope.deductNos().stream().map(value -> "D|" + value).toList());
+        itemKeys.addAll(resolvedDeductNos.stream().map(value -> "D|" + value).toList());
         for (StockDeductRecordEntity deduct : deducts.values()) {
             itemKeys.add("R|" + deduct.getRequestId());
         }
@@ -164,20 +170,27 @@ public class ResourceScopeEnrichmentServiceImpl implements ResourceScopeEnrichme
 
     private Map<String, List<MqDeadLetterEntity>> loadDeadLetters(
             Iterable<StockDeductRecordEntity> deducts,
-            List<String> explicitDeductNos) {
+            List<String> explicitDeductNos,
+            List<MqDeadLetterEntity> explicitDeadLetters) {
         TreeSet<String> knownDeductNos = new TreeSet<>(explicitDeductNos);
         deducts.forEach(deduct -> {
             if (StringUtils.hasText(deduct.getDeductNo())) {
                 knownDeductNos.add(deduct.getDeductNo());
             }
         });
-        if (knownDeductNos.isEmpty()) {
+        if (knownDeductNos.isEmpty() && explicitDeadLetters.isEmpty()) {
             return Map.of();
         }
-        List<MqDeadLetterEntity> rows = deadLetterMapper.selectList(Wrappers.<MqDeadLetterEntity>lambdaQuery()
-                .in(MqDeadLetterEntity::getBizKey, knownDeductNos)
-                .orderByAsc(MqDeadLetterEntity::getBizKey)
-                .orderByAsc(MqDeadLetterEntity::getId));
+        TreeMap<Long, MqDeadLetterEntity> uniqueRows = new TreeMap<>();
+        explicitDeadLetters.forEach(row -> uniqueRows.put(row.getId(), row));
+        if (!knownDeductNos.isEmpty()) {
+            deadLetterMapper.selectList(Wrappers.<MqDeadLetterEntity>lambdaQuery()
+                            .in(MqDeadLetterEntity::getBizKey, knownDeductNos)
+                            .orderByAsc(MqDeadLetterEntity::getBizKey)
+                            .orderByAsc(MqDeadLetterEntity::getId))
+                    .forEach(row -> uniqueRows.put(row.getId(), row));
+        }
+        List<MqDeadLetterEntity> rows = List.copyOf(uniqueRows.values());
         Map<String, List<MqDeadLetterEntity>> result = new TreeMap<>();
         for (MqDeadLetterEntity row : rows) {
             if (StringUtils.hasText(row.getBizKey()) && knownDeductNos.contains(row.getBizKey())) {
@@ -192,6 +205,15 @@ public class ResourceScopeEnrichmentServiceImpl implements ResourceScopeEnrichme
             }
         }
         return result;
+    }
+
+    private List<MqDeadLetterEntity> loadExplicitDeadLetters(List<Long> deadLetterIds) {
+        if (deadLetterIds.isEmpty()) {
+            return List.of();
+        }
+        return deadLetterMapper.selectList(Wrappers.<MqDeadLetterEntity>lambdaQuery()
+                .in(MqDeadLetterEntity::getId, deadLetterIds)
+                .orderByAsc(MqDeadLetterEntity::getId));
     }
 
     private ResourceScopeEnrichmentResponse.Item item(
@@ -315,10 +337,12 @@ public class ResourceScopeEnrichmentServiceImpl implements ResourceScopeEnrichme
         }
         List<String> requestIds = normalizeStrings(request.getRequestIds(), "requestIds");
         List<String> deductNos = normalizeStrings(request.getDeductNos(), "deductNos");
-        if (requestIds.isEmpty() && deductNos.isEmpty()) {
-            throw new BizException("requestIds or deductNos must not be empty");
+        List<Long> deadLetterIds = normalizeIds(request.getDeadLetterIds());
+        if (requestIds.isEmpty() && deductNos.isEmpty() && deadLetterIds.isEmpty()) {
+            throw new BizException("requestIds, deductNos or deadLetterIds must not be empty");
         }
-        if (requestIds.size() > MAX_IDENTIFIERS || deductNos.size() > MAX_IDENTIFIERS) {
+        if (requestIds.size() > MAX_IDENTIFIERS || deductNos.size() > MAX_IDENTIFIERS
+                || deadLetterIds.size() > MAX_IDENTIFIERS) {
             throw new BizException("identifier count must not exceed " + MAX_IDENTIFIERS);
         }
         TreeSet<IncidentAnomalyType> anomalyTypes = new TreeSet<>(Comparator.comparing(Enum::name));
@@ -328,8 +352,18 @@ public class ResourceScopeEnrichmentServiceImpl implements ResourceScopeEnrichme
         if (anomalyTypes.isEmpty()) {
             throw new BizException("anomalyTypes must not be empty");
         }
-        return new Scope(request.getDiscoveryRequestId().trim(), requestIds, deductNos,
+        return new Scope(request.getDiscoveryRequestId().trim(), requestIds, deductNos, deadLetterIds,
                 List.copyOf(anomalyTypes));
+    }
+
+    private List<Long> normalizeIds(List<Long> values) {
+        if (values == null) return List.of();
+        TreeSet<Long> result = new TreeSet<>();
+        for (Long value : values) {
+            if (value == null || value <= 0) throw new BizException("deadLetterIds must be positive");
+            result.add(value);
+        }
+        return List.copyOf(result);
     }
 
     private List<String> normalizeStrings(List<String> values, String field) {
@@ -349,6 +383,7 @@ public class ResourceScopeEnrichmentServiceImpl implements ResourceScopeEnrichme
     private record Scope(String discoveryRequestId,
                          List<String> requestIds,
                          List<String> deductNos,
+                         List<Long> deadLetterIds,
                          List<IncidentAnomalyType> anomalyTypes) {
     }
 }
