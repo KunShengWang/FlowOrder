@@ -66,6 +66,8 @@ spring:
 floworder:
   admin:
     enabled: false
+  incident-scope:
+    internal-token: ${FLOWORDER_INCIDENT_SCOPE_INTERNAL_TOKEN:}
   thread-pool:
     resource-outbox:
       size: 2

@@ -120,7 +120,8 @@ CREATE TABLE fo_reservation_order (
     UNIQUE KEY uk_request_id (request_id),
     KEY idx_user_id (user_id),
     KEY idx_stock_item_id (stock_item_id),
-    KEY idx_status_expire_time (status, expire_time)
+    KEY idx_status_expire_time (status, expire_time),
+    KEY idx_incident_scope_updated_id_status (updated_at, id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='预约订单表';
 
 ALTER TABLE fo_reservation_order
