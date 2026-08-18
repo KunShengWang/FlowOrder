@@ -37,11 +37,12 @@ public class MqDeadLetterMonitorTask {
     )
     public void monitor() {
         try {
+            // 回收重放超时的死信
             deadLetterService.recoverStaleReplaying(
                     LocalDateTime.now().minusSeconds(replayTimeoutSeconds),
                     100
             );
-            // 计算未解决的消息数
+            // 统计未解决的死信数量，有则告警
             long unresolved = deadLetterService.countUnresolved();
             if (unresolved > 0) {
                 log.error("存在未解决MQ消费死信, count={}", unresolved);

@@ -29,13 +29,16 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
     public String submit(ResourceOrderCreateDto dto, String traceId) {
         // 验证ResourceOrderCreateDto参数是否合法
         validateRequest(dto);
+        // 看下是否是重复请求，重复请求直接返回数据库持久化的内容
         ReservationRequestEntity existing = findByRequestId(dto.getRequestId());
         if (existing != null) {
+            // 验证是否是相同的请求
             validateSameRequest(existing, dto);
             return existing.getRequestId();
         }
         ReservationRequestEntity request = buildRequest(dto, traceId);
         try {
+            // 把预约请求异步持久化落库
             requestMapper.insert(request);
             return request.getRequestId();
         } catch (DuplicateKeyException exception) {
@@ -235,6 +238,9 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
         }
     }
 
+    /**
+     * 验证是否是相同的请求
+     */
     private void validateSameRequest(ReservationRequestEntity existing, ResourceOrderCreateDto dto) {
         boolean same = Objects.equals(existing.getUserId(), dto.getUserId())
                         && Objects.equals(existing.getResourceId(), dto.getResourceId())

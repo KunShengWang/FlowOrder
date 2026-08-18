@@ -210,9 +210,10 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
     public int recoverStaleReplaying(LocalDateTime deadline, int limit) {
         int safeLimit = Math.min(Math.max(limit, 1), 200);
 
+        // 查出所有 status=REPLAYING 且 replayedAt <= deadline 的死信（重放超时）
         List<MqDeadLetterEntity> records = deadLetterMapper.selectList(
                 Wrappers.<MqDeadLetterEntity>lambdaQuery()
-                        .eq(MqDeadLetterEntity::getStatus, STATUS_REPLAYING)
+                        .eq(MqDeadLetterEntity::getStatus, STATUS_REPLAYING)// 重放中
                         .le(MqDeadLetterEntity::getReplayedAt, deadline)
                         .orderByAsc(MqDeadLetterEntity::getReplayedAt)
                         .last("limit " + safeLimit)
@@ -220,6 +221,7 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
 
         int recovered = 0;
         for (MqDeadLetterEntity record : records) {
+            // 每个死信在独立事务里回收，防止一个失败影响全部
             Boolean changed = transactionTemplate.execute(
                     status -> recoverOne(record.getId())
             );
@@ -246,12 +248,14 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
             return false;
         }
 
+        // 如果业务其实已经收敛了 → 直接标记为 RESOLVED（已解决）
         if (isBusinessConverged(dead)) {
             return resolve(dead.getDeadQueue(), dead.getMessageId(), null,
                     "扫描确认业务状态已经收敛") > 0;
         }
 
         LocalDateTime now = LocalDateTime.now();
+        // 把死信从 REPLAYING 退回 PENDING，重新开放处理权
         int rows = deadLetterMapper.update(
                 null,
                 Wrappers.<MqDeadLetterEntity>lambdaUpdate()
@@ -262,6 +266,7 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
                         .set(MqDeadLetterEntity::getUpdatedAt, now)
         );
 
+        // 如果是创建命令死信，还要把库存预扣记录转 MANUAL_REVIEW（人工审核）
         if (rows == 1 && ORDER_CREATE_DLQ.equals(dead.getDeadQueue())) {
             deductRecordMapper.update(
                     null,
@@ -292,7 +297,7 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
                                 MqDeadLetterEntity::getMessageId, messageId)
                         .eq(StringUtils.hasText(bizKey),
                                 MqDeadLetterEntity::getBizKey, bizKey)
-                        .in(MqDeadLetterEntity::getStatus, 0, 10)
+                        .in(MqDeadLetterEntity::getStatus, 0, 10)// 待处理、重放中
                         .set(MqDeadLetterEntity::getStatus, 20)// 状态改为已解决
                         .set(MqDeadLetterEntity::getHandledBy, "SYSTEM")
                         .set(MqDeadLetterEntity::getResolutionNote, note)
@@ -560,11 +565,16 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
         });
     }
 
+    /**
+     * "业务收敛"指：死信所对应的那条业务（同一 deductNo 的库存预扣记录）已经到达了一个明确的终态（ORDER_CREATED / RELEASED / SOLD），
+     * 订单和库存的状态已经对齐一致，不再需要死信再去处理什么。
+     */
     private boolean isBusinessConverged(MqDeadLetterEntity dead) {
         if (!StringUtils.hasText(dead.getBizKey())) {
             return false;
         }
 
+        // 用死信的 bizKey(=deductNo) 查对应的库存预扣记录
         StockDeductRecordEntity record = deductRecordMapper.selectOne(
                 Wrappers.<StockDeductRecordEntity>lambdaQuery()
                         .eq(StockDeductRecordEntity::getDeductNo, dead.getBizKey())
@@ -574,8 +584,10 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
             return false;
         }
 
-        Integer status = record.getStatus();
-        // 如果是订单已创建、库存已释放、库存已确认成交中的其中一个就返回true
+        Integer status = record.getStatus();// 预扣记录当前状态
+
+        // ① 创建命令死信（ORDER_CREATE_DLQ）
+        // 如果是订单已创建、库存已释放、库存已确认成交中的其中一个就返回true（终态）
         if (ORDER_CREATE_DLQ.equals(dead.getDeadQueue())) {
             return Objects.equals(status, ORDER_CREATED.getCode())
                     || Objects.equals(status, RELEASED.getCode())
@@ -583,17 +595,23 @@ public class MqDeadLetterServiceImpl implements MqDeadLetterService {
         }
 
         try {
+            // ② 订单结果死信（ORDER_RESULT_DLQ）
             if (ORDER_RESULT_DLQ.equals(dead.getDeadQueue())) {
                 OrderCreateResultMessage message = objectMapper.readValue(
                         dead.getContent(), OrderCreateResultMessage.class);
 
+                // 如果结果是"创建成功"，则预扣记录到了 ORDER_CREATED/RELEASED/SOLD 任一终态即收敛；如果结果是"创建失败"，则必须预扣记录是 RELEASED（库存已释放）才算收敛
                 return Boolean.TRUE.equals(message.getSuccess())
+                        // 预扣记录是 ORDER_CREATED 或 RELEASED 或 SOLD
                         ? Objects.equals(status, ORDER_CREATED.getCode())
                         || Objects.equals(status, RELEASED.getCode())
                         || Objects.equals(status, SOLD.getCode())
+                        // 预扣记录是 RELEASED
                         : Objects.equals(status, RELEASED.getCode());
             }
 
+            // ③ 订单状态死信（ORDER_STATE_DLQ）
+            // 只允许 ORDER_CONFIRMED → SOLD、ORDER_CANCELLED/ORDER_TIMEOUT → RELEASED 这些明确对应关系视为收敛；未知或未来新增的事件必须返回 false（不收敛），绝不随便当作已收敛结案，避免错误释放库存
             if (ORDER_STATE_DLQ.equals(dead.getDeadQueue())) {
                 OrderStateChangedMessage message = objectMapper.readValue(
                         dead.getContent(),

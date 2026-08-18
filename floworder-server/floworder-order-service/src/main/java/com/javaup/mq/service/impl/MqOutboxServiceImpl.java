@@ -41,7 +41,7 @@ public class MqOutboxServiceImpl implements MqOutboxService {
         return mqOutboxMapper.selectList(
                 Wrappers.<MqOutboxEntity>lambdaQuery()
                         .eq(MqOutboxEntity::getProducerService, ORDER_SERVICE)
-                        .in(MqOutboxEntity::getStatus, STATUS_NEW, STATUS_RETRY)
+                        .in(MqOutboxEntity::getStatus, STATUS_NEW, STATUS_RETRY)// 待发送、待重试
                         .le(MqOutboxEntity::getNextRetryTime, now)
                         .orderByAsc(MqOutboxEntity::getId)
                         .last("limit " + limit)
@@ -59,9 +59,9 @@ public class MqOutboxServiceImpl implements MqOutboxService {
                 null,
                 Wrappers.<MqOutboxEntity>lambdaUpdate()
                         .eq(MqOutboxEntity::getId, id)
-                        .in(MqOutboxEntity::getStatus, STATUS_NEW, STATUS_RETRY)
+                        .in(MqOutboxEntity::getStatus, STATUS_NEW, STATUS_RETRY)// 待发送、待重试
                         .le(MqOutboxEntity::getNextRetryTime, now)
-                        .set(MqOutboxEntity::getStatus, STATUS_SENDING)
+                        .set(MqOutboxEntity::getStatus, STATUS_SENDING)// 发送中
                         .set(MqOutboxEntity::getClaimUntil, now.plusSeconds(60))
         );
 

@@ -81,8 +81,8 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
                         .eq(StockDeductRecordEntity::getCreateMode, 3)
-                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode())
-                        .set(StockDeductRecordEntity::getStatus, ORDER_CREATED.getCode())
+                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode())// 已预扣
+                        .set(StockDeductRecordEntity::getStatus, ORDER_CREATED.getCode())// 订单已创建
                         .set(StockDeductRecordEntity::getOrderNo, orderNo)
         );
         if (rows != 1) {

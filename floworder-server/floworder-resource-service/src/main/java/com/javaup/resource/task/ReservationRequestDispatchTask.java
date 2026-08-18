@@ -73,6 +73,7 @@ public class ReservationRequestDispatchTask {
 
         LocalDateTime now = LocalDateTime.now();
 
+        // 回收崩溃实例留下的过期租约
         int recovered = requestService.recoverExpired(
                 now, batchSize, maxRetry
         );
@@ -80,6 +81,7 @@ public class ReservationRequestDispatchTask {
             log.warn("V8回收过期处理租约, recovered={}", recovered);
         }
 
+        // 用 SQL 条件查询出可处理的 待处理 / 待重试请求
         List<ReservationRequestEntity> candidates =
                 requestService.findClaimable(now, batchSize);
 

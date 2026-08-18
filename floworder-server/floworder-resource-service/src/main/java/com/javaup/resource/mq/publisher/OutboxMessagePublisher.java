@@ -45,7 +45,7 @@ public class OutboxMessagePublisher {
             );
             // 在同步等待 RabbitMQ Broker 对消息的确认结果
             CorrelationData.Confirm confirm = correlationData.getFuture().get(5, TimeUnit.SECONDS);
-            // Broker 没有确认接收该消息，说明发布失败
+                // Broker 没有确认接收该消息，说明发布失败
             if (!confirm.isAck()) {
                 throw new IllegalStateException("Broker NACK: " + confirm.getReason());
             }

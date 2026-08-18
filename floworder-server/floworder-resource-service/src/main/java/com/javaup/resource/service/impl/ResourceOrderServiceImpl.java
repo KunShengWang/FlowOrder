@@ -697,7 +697,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         record.setStockItemId(createDto.getStockItemId());
         record.setQuantity(createDto.getQuantity());
         record.setRequestId(createDto.getRequestId());
-        record.setStatus(STOCK_DEDUCT_STATUS_PRE_DEDUCTED);
+        record.setStatus(STOCK_DEDUCT_STATUS_PRE_DEDUCTED);// 已预扣状态
         record.setCreateMode(CREATE_MODE_ASYNC);
         // 订单超时时间，不是MQ发送重试时间
         record.setExpireTime(now.plusMinutes(DEFAULT_EXPIRE_MINUTES));
@@ -753,7 +753,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         outbox.setExchangeName(ORDER_CREATE_EXCHANGE);
         outbox.setRoutingKey(ORDER_CREATE_ROUTING_KEY);
         outbox.setContent(content);
-        outbox.setStatus(OUTBOX_STATUS_NEW);
+        outbox.setStatus(OUTBOX_STATUS_NEW);// 待发送状态
         outbox.setRetryCount(0);
         outbox.setNextRetryTime(now);
         outbox.setClaimUntil(null);
