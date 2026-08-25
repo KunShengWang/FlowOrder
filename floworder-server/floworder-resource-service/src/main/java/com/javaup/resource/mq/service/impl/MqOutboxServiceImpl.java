@@ -119,9 +119,9 @@ public class MqOutboxServiceImpl implements MqOutboxService {
                 null,
                 Wrappers.<MqOutboxEntity>lambdaUpdate()
                         .eq(MqOutboxEntity::getProducerService, RESOURCE_SERVICE)
-                        .eq(MqOutboxEntity::getStatus, STATUS_SENDING)// 找到发送中的消息
+                        .eq(MqOutboxEntity::getStatus, STATUS_SENDING)// 发送中
                         .le(MqOutboxEntity::getClaimUntil, now)// 说明它的发送租约已经过期
-                        .set(MqOutboxEntity::getStatus, STATUS_RETRY)// 状态改为待重试
+                        .set(MqOutboxEntity::getStatus, STATUS_RETRY)// 待重试
                         .set(MqOutboxEntity::getNextRetryTime, now)
                         .set(MqOutboxEntity::getClaimUntil, null)// claimUntil 清空，表示不再被某个发送任务占有
                         .set(MqOutboxEntity::getLastError, "发送租约过期，等待重新发送")
@@ -195,7 +195,7 @@ public class MqOutboxServiceImpl implements MqOutboxService {
                         .eq(MqOutboxEntity::getMessageId, messageId)
                         .eq(MqOutboxEntity::getProducerService, RESOURCE_SERVICE)
                         .eq(MqOutboxEntity::getStatus, expectedStatus)
-                        .set(MqOutboxEntity::getStatus, STATUS_RETRY)
+                        .set(MqOutboxEntity::getStatus, STATUS_RETRY)// 待重试
                         .set(MqOutboxEntity::getRetryCount, 0)
                         .set(MqOutboxEntity::getNextRetryTime, now)
                         .set(MqOutboxEntity::getClaimUntil, null)

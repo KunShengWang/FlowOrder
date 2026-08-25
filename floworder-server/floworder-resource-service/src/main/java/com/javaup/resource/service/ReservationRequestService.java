@@ -11,11 +11,15 @@ public interface ReservationRequestService {
 
     String submit(ResourceOrderCreateDto dto, String traceId);
 
+    InstantRequestSubmission submitInstant(ResourceOrderCreateDto dto, String traceId);
+
+    ReservationRequestEntity findByRequestId(String requestId);
+
     List<ReservationRequestEntity> findClaimable(LocalDateTime now, int limit);
 
     boolean claim(Long id, String owner, LocalDateTime now, LocalDateTime claimUntil);
 
-    void markSucceeded(Long id, String owner, String orderNo);
+    void markAccepted(Long id, String owner, String orderNo);
 
     void markOrderStateChanged(
             String requestId,
@@ -37,4 +41,10 @@ public interface ReservationRequestService {
     int recoverExpired(LocalDateTime now, int limit, int maxRetry);
 
     ReservationRequestResultDto getResult(String requestId);
+
+    record InstantRequestSubmission(
+            ReservationRequestEntity request,
+            Boolean created
+    ) {
+    }
 }

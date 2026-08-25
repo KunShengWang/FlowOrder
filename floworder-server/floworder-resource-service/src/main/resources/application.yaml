@@ -105,6 +105,12 @@ floworder:
       core-size: 4
       max-size: 8
       queue-capacity: 100
+  instant:
+    enabled: true
+    credential-ttl-hours: 24
+    orphan-timeout-ms: 60000
+    orphan-scan-delay-ms: 5000
+    orphan-batch-size: 100
 
 #feign:
 #  sentinel:

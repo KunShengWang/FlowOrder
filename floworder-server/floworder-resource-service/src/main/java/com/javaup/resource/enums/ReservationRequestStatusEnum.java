@@ -7,7 +7,7 @@ public enum ReservationRequestStatusEnum {
 
     PENDING(0),
     PROCESSING(10),
-    SUCCEEDED(20),
+    ACCEPTED(20),
     RETRY(30),
     FAILED(40),
     MANUAL_REVIEW(50);

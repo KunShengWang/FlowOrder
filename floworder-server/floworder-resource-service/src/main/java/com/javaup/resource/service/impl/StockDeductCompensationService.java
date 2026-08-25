@@ -52,7 +52,7 @@ public class StockDeductCompensationService {
         List<StockDeductRecordEntity> records =
                 deductRecordMapper.selectList(
                         Wrappers.<StockDeductRecordEntity>lambdaQuery()
-                                .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)
+                                .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)// 已预扣
                                 .eq(StockDeductRecordEntity::getCreateMode, CREATE_MODE_SYNC)
                                 .le(StockDeductRecordEntity::getNextRetryTime, LocalDateTime.now())// 小于等于当前时间
                                 .orderByAsc(StockDeductRecordEntity::getNextRetryTime)
@@ -138,7 +138,7 @@ public class StockDeductCompensationService {
                 null,
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
-                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)
+                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)// 已预扣
                         .eq(StockDeductRecordEntity::getRetryCount, retryCount)
                         .set(StockDeductRecordEntity::getRetryCount, retryCount + 1)
                         .set(StockDeductRecordEntity::getNextRetryTime, LocalDateTime.now().plusSeconds(nextDelaySeconds))
@@ -165,7 +165,7 @@ public class StockDeductCompensationService {
 
         var updateWrapper = Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
-                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)
+                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)// 已预扣
                         .eq(StockDeductRecordEntity::getQueryErrorCount, currentCount)
                         .set(StockDeductRecordEntity::getQueryErrorCount, nextCount)
                         .set(StockDeductRecordEntity::getLastError, error);
@@ -173,7 +173,7 @@ public class StockDeductCompensationService {
         if (nextCount >= MAX_QUERY_ERROR_COUNT) {
             // 查询结果始终未知，只停止自动处理，不释放库存
             updateWrapper
-                    .set(StockDeductRecordEntity::getStatus, MANUAL_REVIEW)
+                    .set(StockDeductRecordEntity::getStatus, MANUAL_REVIEW)// 人工确认
                     .set(StockDeductRecordEntity::getNextRetryTime, null);
         } else {
             long delaySeconds = switch (nextCount) {
@@ -279,7 +279,7 @@ public class StockDeductCompensationService {
                 null,
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
-                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)
+                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED)// 已预扣
                         .eq(StockDeductRecordEntity::getCreateMode, CREATE_MODE_SYNC)
                         .le(StockDeductRecordEntity::getNextRetryTime, now)
                         // 60秒内不允许其他实例再次处理

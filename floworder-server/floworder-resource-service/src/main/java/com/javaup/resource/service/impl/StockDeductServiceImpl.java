@@ -9,6 +9,8 @@ import com.javaup.resource.entity.StockItemEntity;
 import com.javaup.resource.mapper.MqOutboxMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
+import com.javaup.resource.mapper.ReservationRequestMapper;
+import com.javaup.resource.exception.InstantStockMismatchException;
 import com.javaup.resource.service.ReservationAdmissionService;
 import com.javaup.resource.service.StockDeductService;
 import jakarta.annotation.Resource;
@@ -31,6 +33,9 @@ public class StockDeductServiceImpl implements StockDeductService {
 
     @Resource
     private ReservationAdmissionService reservationAdmissionService;
+
+    @Resource
+    private ReservationRequestMapper reservationRequestMapper;
 
     /**
      * 库存预扣
@@ -69,9 +74,9 @@ public class StockDeductServiceImpl implements StockDeductService {
                 null,
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getDeductNo, deductNo)
-                        .eq(StockDeductRecordEntity::getStatus, 10)
+                        .eq(StockDeductRecordEntity::getStatus, 10)// 已预扣
                         .set(StockDeductRecordEntity::getOrderNo, orderNo)
-                        .set(StockDeductRecordEntity::getStatus, 20)
+                        .set(StockDeductRecordEntity::getStatus, 20)// 订单已创建
         );
         if (rows != 1) {
             throw new BizException("确认库存预扣记录失败");
@@ -150,6 +155,43 @@ public class StockDeductServiceImpl implements StockDeductService {
         int outboxRows = mqOutboxMapper.insert(outbox);
         if (outboxRows != 1) {
             throw new BizException("订单创建消息保存失败");
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void preDeductAndSaveOutboxAndAcceptRequest(
+            ResourceOrderCreateDto createDto,
+            StockDeductRecordEntity record,
+            MqOutboxEntity outbox,
+            Long requestDbId,
+            String owner
+    ) {
+        LocalDateTime now = LocalDateTime.now();
+        reservationAdmissionService.reserveQuota(createDto, now);
+        if (deductRecordMapper.insert(record) != 1) {
+            throw new BizException("库存预扣记录保存失败");
+        }
+        int stockRows = stockItemMapper.preDeductIfAdmissible(
+                createDto.getResourceId(),
+                createDto.getStockItemId(),
+                createDto.getQuantity(),
+                now
+        );
+        if (stockRows != 1) {
+            throw new InstantStockMismatchException("资源不可预约或MySQL库存不足");
+        }
+        if (mqOutboxMapper.insert(outbox) != 1) {
+            throw new BizException("订单创建消息保存失败");
+        }
+        int requestRows = reservationRequestMapper.markAccepted(
+                requestDbId,
+                owner,
+                record.getOrderNo(),
+                now
+        );
+        if (requestRows != 1) {
+            throw new IllegalStateException("Instant预约请求受理状态更新失败");
         }
     }
 }

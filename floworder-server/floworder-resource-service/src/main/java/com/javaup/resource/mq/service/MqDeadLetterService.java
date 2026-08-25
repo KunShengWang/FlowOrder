@@ -10,7 +10,7 @@ import java.util.List;
 public interface MqDeadLetterService {
 
     /**
-     * Persist a RabbitMQ dead letter and isolate an uncertain create command.
+     * 持久化 RabbitMQ 死信，并隔离一条不确定的创建指令。
      */
     void record(String deadQueue,
                 String messageId,

@@ -3,10 +3,12 @@ package com.javaup.resource.mq;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.javaup.dto.OrderCreateResultMessage;
 import com.javaup.resource.entity.MqConsumeLogEntity;
+import com.javaup.resource.entity.ReservationRequestEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.entity.StockItemEntity;
 import com.javaup.resource.entity.UserReservationQuotaEntity;
 import com.javaup.resource.mapper.MqConsumeLogMapper;
+import com.javaup.resource.mapper.ReservationRequestMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.mapper.UserReservationQuotaMapper;
@@ -14,7 +16,10 @@ import com.javaup.resource.mq.service.OrderResultMessageService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.RedissonClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -30,9 +35,17 @@ import static org.junit.jupiter.api.Assertions.*;
         "spring.rabbitmq.listener.simple.auto-startup=false",
         "floworder.mq.outbox-publish-enabled=false",
         "floworder.compensation.enabled=false",
+        "floworder.instant.enabled=false",
+        "floworder.v8.enabled=false",
         "floworder.admin.enabled=false"
 })
 class OrderResultMessageServiceIntegrationTest {
+
+    @MockitoBean
+    private RedissonClient redissonClient;
+
+    @MockitoBean
+    private StringRedisTemplate stringRedisTemplate;
 
     @Resource
     private OrderResultMessageService messageService;
@@ -49,6 +62,9 @@ class OrderResultMessageServiceIntegrationTest {
     @Resource
     private MqConsumeLogMapper consumeLogMapper;
 
+    @Resource
+    private ReservationRequestMapper requestMapper;
+
     private final List<Long> stockItemIds = new ArrayList<>();
     private final List<Long> quotaIds = new ArrayList<>();
     private final List<String> deductNos = new ArrayList<>();
@@ -59,6 +75,11 @@ class OrderResultMessageServiceIntegrationTest {
             consumeLogMapper.delete(
                     Wrappers.<MqConsumeLogEntity>lambdaQuery()
                             .eq(MqConsumeLogEntity::getBizKey, deductNo)
+            );
+            requestMapper.delete(
+                    Wrappers.<ReservationRequestEntity>lambdaQuery()
+                            .eq(ReservationRequestEntity::getRequestId,
+                                    requestIdByDeductNo(deductNo))
             );
             deductRecordMapper.delete(
                     Wrappers.<StockDeductRecordEntity>lambdaQuery()
@@ -78,6 +99,7 @@ class OrderResultMessageServiceIntegrationTest {
         assertEquals(fixture.stockItemId(), messageService.handle(message));
 
         assertState(fixture, 10, 0, 0, RELEASED.getCode());
+        assertRequestState(fixture, 40, 50);
         assertEquals(1L, consumeLogCount(fixture.deductNo()));
     }
 
@@ -89,6 +111,7 @@ class OrderResultMessageServiceIntegrationTest {
         assertNull(messageService.handle(message));
 
         assertState(fixture, 7, 3, 3, ORDER_CREATED.getCode());
+        assertRequestState(fixture, 20, 10);
         assertEquals(1L, consumeLogCount(fixture.deductNo()));
     }
 
@@ -146,6 +169,24 @@ class OrderResultMessageServiceIntegrationTest {
         record.setCreateMode(3);
         assertEquals(1, deductRecordMapper.insert(record));
         deductNos.add(deductNo);
+
+        ReservationRequestEntity request = new ReservationRequestEntity();
+        request.setRequestId(requestId);
+        request.setTraceId("trace-" + suffix);
+        request.setUserId(userId);
+        request.setResourceId(1L);
+        request.setStockItemId(stockItemId);
+        request.setQuantity(3);
+        request.setProcessingMode(1);
+        request.setOrderNo(orderNo);
+        request.setStatus(20);
+        request.setOrderStatus(null);
+        request.setOrderEventVersion(0);
+        request.setRetryCount(0);
+        request.setVersion(0);
+        request.setCreatedAt(now);
+        request.setUpdatedAt(now);
+        assertEquals(1, requestMapper.insert(request));
 
         UserReservationQuotaEntity quota = new UserReservationQuotaEntity();
         quota.setResourceId(1L);
@@ -213,6 +254,24 @@ class OrderResultMessageServiceIntegrationTest {
                 Wrappers.<MqConsumeLogEntity>lambdaQuery()
                         .eq(MqConsumeLogEntity::getBizKey, deductNo)
         );
+    }
+
+    private void assertRequestState(Fixture fixture, int requestStatus, int orderStatus) {
+        ReservationRequestEntity request = requestMapper.selectOne(
+                Wrappers.<ReservationRequestEntity>lambdaQuery()
+                        .eq(ReservationRequestEntity::getRequestId, fixture.requestId())
+        );
+        assertNotNull(request);
+        assertEquals(requestStatus, request.getStatus());
+        assertEquals(orderStatus, request.getOrderStatus());
+    }
+
+    private String requestIdByDeductNo(String deductNo) {
+        StockDeductRecordEntity record = deductRecordMapper.selectOne(
+                Wrappers.<StockDeductRecordEntity>lambdaQuery()
+                        .eq(StockDeductRecordEntity::getDeductNo, deductNo)
+        );
+        return record == null ? "__missing__" : record.getRequestId();
     }
 
     private long positiveId() {

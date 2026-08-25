@@ -204,8 +204,8 @@ public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, Reserv
     private void saveCreateStatusLog(String orderNo) {
         OrderStatusLogEntity log = new OrderStatusLogEntity();
         log.setOrderNo(orderNo);
-        log.setFromStatus(INIT.getCode());
-        log.setToStatus(RESERVED.getCode());
+        log.setFromStatus(INIT.getCode());// 初始化
+        log.setToStatus(RESERVED.getCode());// 已预约
         log.setEvent(CREATE.getCode());
         log.setOperatorType(SYSTEM.getCode());
         log.setRemark("订单创建成功");

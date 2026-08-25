@@ -18,4 +18,10 @@ public interface ResourceOrderService {
      * V3版本创建订单
      */
     String createV3(ResourceOrderCreateDto createDto);
+
+    String createInstantAfterAdmission(
+            ResourceOrderCreateDto createDto,
+            Long requestDbId,
+            String owner
+    );
 }

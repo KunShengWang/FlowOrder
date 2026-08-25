@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.dto.OrderCreateResultMessage;
 import com.javaup.resource.mq.service.MqDeadLetterService;
 import com.javaup.resource.mq.service.OrderResultMessageService;
+import com.javaup.resource.service.InstantAdmissionService;
 import com.rabbitmq.client.Channel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,9 @@ public class OrderResultConsumer {
     @Resource
     private MqDeadLetterService deadLetterService;
 
+    @Resource
+    private InstantAdmissionService instantAdmissionService;
+
     @RabbitListener(
             queues = ORDER_RESULT_QUEUE,
             containerFactory = "orderResultListenerContainerFactory"
@@ -70,6 +74,7 @@ public class OrderResultConsumer {
                     Long stockItemId = resultService.handle(result);
                     if (stockItemId != null) {
                         stringRedisTemplate.delete(FLOWORDER_STOCK + stockItemId);
+                        instantAdmissionService.markReleasedAfterCacheInvalidation(result.getRequestId());
                     }
                     deadLetterService.resolveOrderResult(result);
                     channel.basicAck(tag, false);

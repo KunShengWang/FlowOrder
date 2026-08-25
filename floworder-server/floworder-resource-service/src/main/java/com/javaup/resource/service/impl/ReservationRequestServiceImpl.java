@@ -16,6 +16,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
+import static com.javaup.resource.enums.ReservationProcessingModeEnum.ASYNC_V8;
+import static com.javaup.resource.enums.ReservationProcessingModeEnum.INSTANT;
+
 @Service
 public class ReservationRequestServiceImpl implements ReservationRequestService {
 
@@ -36,7 +39,7 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
             validateSameRequest(existing, dto);
             return existing.getRequestId();
         }
-        ReservationRequestEntity request = buildRequest(dto, traceId);
+        ReservationRequestEntity request = buildRequest(dto, traceId, ASYNC_V8.getMode());
         try {
             // 把预约请求异步持久化落库
             requestMapper.insert(request);
@@ -52,6 +55,28 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
             }
             validateSameRequest(existing, dto);
             return existing.getRequestId();
+        }
+    }
+
+    @Override
+    public InstantRequestSubmission submitInstant(ResourceOrderCreateDto dto, String traceId) {
+        validateRequest(dto);
+        ReservationRequestEntity existing = findByRequestId(dto.getRequestId());
+        if (existing != null) {
+            validateSameRequest(existing, dto);
+            return new InstantRequestSubmission(existing, false);
+        }
+        ReservationRequestEntity request = buildRequest(dto, traceId, INSTANT.getMode());
+        try {
+            requestMapper.insert(request);
+            return new InstantRequestSubmission(request, true);
+        } catch (DuplicateKeyException exception) {
+            existing = findByRequestId(dto.getRequestId());
+            if (existing == null) {
+                throw exception;
+            }
+            validateSameRequest(existing, dto);
+            return new InstantRequestSubmission(existing, false);
         }
     }
 
@@ -74,7 +99,7 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
     }
 
     @Override
-    public void markSucceeded(
+    public void markAccepted(
             Long id,
             String owner,
             String orderNo
@@ -83,14 +108,23 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
             throw new IllegalArgumentException("orderNo不能为空");
         }
 
-        int rows = requestMapper.markSucceeded(
+        int rows = requestMapper.markAccepted(
                 id,
                 owner,
                 orderNo,
                 LocalDateTime.now()
         );
 
-        ensureUpdated(rows, "预约请求成功状态更新失败");
+        if (rows == 1) {
+            return;
+        }
+        ReservationRequestEntity current = findByRequestIdById(id);
+        if (current != null
+                && Objects.equals(current.getStatus(), ReservationRequestStatusEnum.ACCEPTED.getStatus())
+                && Objects.equals(current.getOrderNo(), orderNo)) {
+            return;
+        }
+        throw new IllegalStateException("预约请求受理状态更新失败");
     }
 
     @Override
@@ -200,14 +234,19 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
         return result;
     }
 
-    private ReservationRequestEntity findByRequestId(String requestId) {
+    @Override
+    public ReservationRequestEntity findByRequestId(String requestId) {
         return requestMapper.selectOne(
                 Wrappers.<ReservationRequestEntity>lambdaQuery()
                         .eq(ReservationRequestEntity::getRequestId, requestId)
         );
     }
 
-    private ReservationRequestEntity buildRequest(ResourceOrderCreateDto dto, String traceId) {
+    private ReservationRequestEntity buildRequest(
+            ResourceOrderCreateDto dto,
+            String traceId,
+            Integer processingMode
+    ) {
         LocalDateTime now = LocalDateTime.now();
         ReservationRequestEntity request = new ReservationRequestEntity();
         request.setRequestId(dto.getRequestId());
@@ -216,6 +255,7 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
         request.setResourceId(dto.getResourceId());
         request.setStockItemId(dto.getStockItemId());
         request.setQuantity(dto.getQuantity());
+        request.setProcessingMode(processingMode);
         request.setStatus(ReservationRequestStatusEnum.PENDING.getStatus());
         request.setOrderEventVersion(0);
         request.setRetryCount(0);
@@ -224,6 +264,10 @@ public class ReservationRequestServiceImpl implements ReservationRequestService 
         request.setCreatedAt(now);
         request.setUpdatedAt(now);
         return request;
+    }
+
+    private ReservationRequestEntity findByRequestIdById(Long id) {
+        return requestMapper.selectById(id);
     }
 
     private void validateRequest(ResourceOrderCreateDto dto) {
