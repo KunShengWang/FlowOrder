@@ -19,10 +19,14 @@ public class GatewayFlowRuleConfig {
      */
     private static final String ORDER_CREATE_API = "order-create-api";
 
+    private static final String INSTANT_ORDER_CREATE_API = "instant-order-create-api";
+
     /**
      * 单实例每秒允许通过的请求数。
      */
     private static final double ORDER_CREATE_QPS = 10D;
+
+    private static final double INSTANT_ORDER_CREATE_QPS = 10D;
 
     @PostConstruct
     public void initGatewayRules() {
@@ -40,7 +44,14 @@ public class GatewayFlowRuleConfig {
 
         ApiDefinition apiDefinition = new ApiDefinition(ORDER_CREATE_API).setPredicateItems(Set.of(pathPredicate));
 
-        GatewayApiDefinitionManager.loadApiDefinitions(Set.of(apiDefinition));
+        ApiDefinition instantApiDefinition = new ApiDefinition(INSTANT_ORDER_CREATE_API)
+                .setPredicateItems(Set.of(
+                        new ApiPathPredicateItem()
+                                .setPattern("/api/reservation/create/instant")
+                                .setMatchStrategy(SentinelGatewayConstants.URL_MATCH_STRATEGY_EXACT)
+                ));
+
+        GatewayApiDefinitionManager.loadApiDefinitions(Set.of(apiDefinition, instantApiDefinition));
     }
 
     /**
@@ -53,6 +64,12 @@ public class GatewayFlowRuleConfig {
                         .setIntervalSec(1)
                         .setBurst(0);
 
-        GatewayRuleManager.loadRules(Set.of(flowRule));
+        GatewayFlowRule instantFlowRule = new GatewayFlowRule(INSTANT_ORDER_CREATE_API)
+                .setResourceMode(SentinelGatewayConstants.RESOURCE_MODE_CUSTOM_API_NAME)
+                .setCount(INSTANT_ORDER_CREATE_QPS)
+                .setIntervalSec(1)
+                .setBurst(0);
+
+        GatewayRuleManager.loadRules(Set.of(flowRule, instantFlowRule));
     }
 }

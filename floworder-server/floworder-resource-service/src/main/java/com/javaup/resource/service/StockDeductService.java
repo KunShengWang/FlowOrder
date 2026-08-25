@@ -24,4 +24,12 @@ public interface StockDeductService {
     void release(ResourceOrderCreateDto dto, String deductNo, String reason);
 
     void preDeductAndSaveOutbox(ResourceOrderCreateDto createDto, StockDeductRecordEntity record, MqOutboxEntity outbox);
+
+    void preDeductAndSaveOutboxAndAcceptRequest(
+            ResourceOrderCreateDto createDto,
+            StockDeductRecordEntity record,
+            MqOutboxEntity outbox,
+            Long requestDbId,
+            String owner
+    );
 }

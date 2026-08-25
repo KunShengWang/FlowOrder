@@ -108,7 +108,7 @@ public final class OrderMqConstant {
     public static final String ORDER_STATE_ROUTING_KEY = "order.state.changed";
 
     /**
-     * 订单创建
+     * 订单已确认
      */
     public static final String ORDER_CONFIRMED = "ORDER_CONFIRMED";
 

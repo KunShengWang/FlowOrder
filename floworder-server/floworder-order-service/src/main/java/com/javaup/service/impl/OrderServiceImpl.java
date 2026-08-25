@@ -62,7 +62,7 @@ public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, Reserv
         order.setResourceId(createOrderDto.getResourceId());
         order.setStockItemId(createOrderDto.getStockItemId());
         order.setQuantity(createOrderDto.getQuantity());
-        order.setStatus(RESERVED.getCode());
+        order.setStatus(RESERVED.getCode());// 已预约
         order.setRequestId(createOrderDto.getRequestId());
         order.setDeductNo(createOrderDto.getDeductNo());
         order.setExpireTime(createOrderDto.getExpireTime());
@@ -204,8 +204,8 @@ public class OrderServiceImpl extends ServiceImpl<ReservationOrderMapper, Reserv
     private void saveCreateStatusLog(String orderNo) {
         OrderStatusLogEntity log = new OrderStatusLogEntity();
         log.setOrderNo(orderNo);
-        log.setFromStatus(INIT.getCode());
-        log.setToStatus(RESERVED.getCode());
+        log.setFromStatus(INIT.getCode());// 初始化
+        log.setToStatus(RESERVED.getCode());// 已预约
         log.setEvent(CREATE.getCode());
         log.setOperatorType(SYSTEM.getCode());
         log.setRemark("订单创建成功");

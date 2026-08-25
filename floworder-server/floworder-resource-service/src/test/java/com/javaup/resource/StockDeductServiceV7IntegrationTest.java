@@ -4,11 +4,13 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.javaup.dto.ResourceOrderCreateDto;
 import com.javaup.exception.BizException;
 import com.javaup.resource.entity.MqOutboxEntity;
+import com.javaup.resource.entity.ReservationRequestEntity;
 import com.javaup.resource.entity.ResourceEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.entity.StockItemEntity;
 import com.javaup.resource.entity.UserReservationQuotaEntity;
 import com.javaup.resource.mapper.MqOutboxMapper;
+import com.javaup.resource.mapper.ReservationRequestMapper;
 import com.javaup.resource.mapper.ResourceMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
@@ -17,8 +19,11 @@ import com.javaup.resource.service.StockDeductService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.RedissonClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -40,9 +45,17 @@ import static org.junit.jupiter.api.Assertions.*;
         "spring.rabbitmq.listener.simple.auto-startup=false",
         "floworder.mq.outbox-publish-enabled=false",
         "floworder.compensation.enabled=false",
+        "floworder.instant.enabled=false",
+        "floworder.v8.enabled=false",
         "floworder.admin.enabled=false"
 })
 class StockDeductServiceV7IntegrationTest {
+
+    @MockitoBean
+    private RedissonClient redissonClient;
+
+    @MockitoBean
+    private StringRedisTemplate stringRedisTemplate;
 
     @Resource
     private StockDeductService stockDeductService;
@@ -62,11 +75,15 @@ class StockDeductServiceV7IntegrationTest {
     @Resource
     private MqOutboxMapper outboxMapper;
 
+    @Resource
+    private ReservationRequestMapper requestMapper;
+
     private final List<Long> resourceIds = new ArrayList<>();
     private final List<Long> stockItemIds = new ArrayList<>();
     private final List<Long> quotaIds = new ArrayList<>();
     private final List<String> deductNos = new ArrayList<>();
     private final List<String> messageIds = new ArrayList<>();
+    private final List<String> requestIds = new ArrayList<>();
 
     @AfterEach
     void cleanData() {
@@ -80,6 +97,12 @@ class StockDeductServiceV7IntegrationTest {
             deductRecordMapper.delete(
                     Wrappers.<StockDeductRecordEntity>lambdaQuery()
                             .eq(StockDeductRecordEntity::getDeductNo, deductNo)
+            );
+        }
+        for (String requestId : requestIds) {
+            requestMapper.delete(
+                    Wrappers.<ReservationRequestEntity>lambdaQuery()
+                            .eq(ReservationRequestEntity::getRequestId, requestId)
             );
         }
         quotaIds.forEach(quotaMapper::deleteById);
@@ -97,6 +120,28 @@ class StockDeductServiceV7IntegrationTest {
         );
 
         assertState(fixture, 2, 8, 2, 1, 1);
+    }
+
+    @Test
+    void instantAcceptanceShouldCommitBusinessDataButKeepOrderStatusNull() {
+        Fixture fixture = insertFixture(10, 5, false);
+        RequestData data = requestData(fixture, 2);
+        ReservationRequestEntity request = insertProcessingRequest(data.dto(), "owner-1");
+
+        stockDeductService.preDeductAndSaveOutboxAndAcceptRequest(
+                data.dto(),
+                data.record(),
+                data.outbox(),
+                request.getId(),
+                "owner-1"
+        );
+
+        assertState(fixture, 2, 8, 2, 1, 1);
+        ReservationRequestEntity accepted = requestMapper.selectById(request.getId());
+        assertNotNull(accepted);
+        assertEquals(20, accepted.getStatus());
+        assertEquals(data.record().getOrderNo(), accepted.getOrderNo());
+        assertNull(accepted.getOrderStatus(), "订单结果消息到达前order_status必须为空");
     }
 
     @Test
@@ -250,6 +295,7 @@ class StockDeductServiceV7IntegrationTest {
         dto.setUserId(fixture.userId());
         dto.setQuantity(quantity);
         dto.setRequestId("V7-REQUEST-" + suffix);
+        requestIds.add(dto.getRequestId());
 
         StockDeductRecordEntity record = new StockDeductRecordEntity();
         record.setDeductNo(deductNo);
@@ -286,6 +332,33 @@ class StockDeductServiceV7IntegrationTest {
         outbox.setCreatedAt(now);
         outbox.setUpdatedAt(now);
         return outbox;
+    }
+
+    private ReservationRequestEntity insertProcessingRequest(
+            ResourceOrderCreateDto dto,
+            String owner
+    ) {
+        LocalDateTime now = LocalDateTime.now();
+        ReservationRequestEntity request = new ReservationRequestEntity();
+        request.setRequestId(dto.getRequestId());
+        request.setTraceId("trace-" + dto.getRequestId());
+        request.setUserId(dto.getUserId());
+        request.setResourceId(dto.getResourceId());
+        request.setStockItemId(dto.getStockItemId());
+        request.setQuantity(dto.getQuantity());
+        request.setProcessingMode(1);
+        request.setStatus(10);
+        request.setOrderStatus(null);
+        request.setOrderEventVersion(0);
+        request.setRetryCount(0);
+        request.setClaimOwner(owner);
+        request.setClaimUntil(now.plusSeconds(30));
+        request.setStartedAt(now);
+        request.setVersion(0);
+        request.setCreatedAt(now);
+        request.setUpdatedAt(now);
+        assertEquals(1, requestMapper.insert(request));
+        return request;
     }
 
     private void assertState(

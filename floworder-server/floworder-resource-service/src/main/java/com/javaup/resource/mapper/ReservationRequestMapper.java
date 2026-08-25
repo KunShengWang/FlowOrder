@@ -50,7 +50,7 @@ public interface ReservationRequestMapper
             UPDATE fo_reservation_request
             SET status = 20,
                 order_no = #{orderNo},
-                order_status = 10,
+                order_status = NULL,
                 claim_owner = NULL,
                 claim_until = NULL,
                 last_error = NULL,
@@ -60,10 +60,44 @@ public interface ReservationRequestMapper
               AND status = 10
               AND claim_owner = #{owner}
             """)
-    int markSucceeded(
+    int markAccepted(
             @Param("id") Long id,
             @Param("owner") String owner,
             @Param("orderNo") String orderNo,
+            @Param("now") LocalDateTime now
+    );
+
+    @Update("""
+            UPDATE fo_reservation_request
+            SET order_status = 10,
+                last_error = NULL,
+                version = version + 1
+            WHERE request_id = #{requestId}
+              AND order_no = #{orderNo}
+              AND status = 20
+              AND order_status IS NULL
+            """)
+    int markOrderCreated(
+            @Param("requestId") String requestId,
+            @Param("orderNo") String orderNo
+    );
+
+    @Update("""
+            UPDATE fo_reservation_request
+            SET status = 40,
+                order_status = 50,
+                last_error = #{error},
+                finished_at = #{now},
+                version = version + 1
+            WHERE request_id = #{requestId}
+              AND order_no = #{orderNo}
+              AND status = 20
+              AND order_status IS NULL
+            """)
+    int markOrderCreateFailed(
+            @Param("requestId") String requestId,
+            @Param("orderNo") String orderNo,
+            @Param("error") String error,
             @Param("now") LocalDateTime now
     );
 
@@ -81,7 +115,7 @@ public interface ReservationRequestMapper
             WHERE request_id = #{requestId}
               AND order_no = #{orderNo}
               AND status = 20
-              AND (order_status IS NULL OR order_status = #{fromStatus})
+              AND order_status = #{fromStatus}
             """)
     int markOrderStateChanged(
             @Param("requestId") String requestId,

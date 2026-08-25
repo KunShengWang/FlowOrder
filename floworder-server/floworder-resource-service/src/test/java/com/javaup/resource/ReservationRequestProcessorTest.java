@@ -6,6 +6,7 @@ import com.javaup.resource.service.ReservationRequestProcessor;
 import com.javaup.resource.service.ReservationRequestService;
 import com.javaup.resource.service.ResourceOrderService;
 import com.javaup.resource.service.V8ReadValidationService;
+import com.javaup.resource.service.InstantReservationProcessor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,9 @@ class ReservationRequestProcessorTest {
     @Mock
     private V8ReadValidationService readValidationService;
 
+    @Mock
+    private InstantReservationProcessor instantReservationProcessor;
+
     private ReservationRequestProcessor processor;
 
     @BeforeEach
@@ -42,7 +46,8 @@ class ReservationRequestProcessorTest {
                 requestService,
                 3,
                 2,
-                readValidationService
+                readValidationService,
+                instantReservationProcessor
         );
     }
 
@@ -52,14 +57,14 @@ class ReservationRequestProcessorTest {
     }
 
     @Test
-    void successShouldMarkSucceededAndClearMdc() {
+    void successShouldMarkAcceptedAndClearMdc() {
         ReservationRequestEntity request = request(0);
         when(resourceOrderService.createV3(any())).thenReturn("order-1");
 
         processor.process(request, "owner-1");
 
         verify(readValidationService).validate(any());
-        verify(requestService).markSucceeded(1L, "owner-1", "order-1");
+        verify(requestService).markAccepted(1L, "owner-1", "order-1");
         verify(requestService, never()).markFailed(anyLong(), anyString(), anyString());
         assertMdcCleared();
     }
@@ -72,7 +77,7 @@ class ReservationRequestProcessorTest {
         processor.process(request, "owner-1");
 
         verify(readValidationService, never()).validate(any());
-        verify(requestService).markSucceeded(1L, "owner-1", "order-1");
+        verify(requestService).markAccepted(1L, "owner-1", "order-1");
         assertMdcCleared();
     }
 

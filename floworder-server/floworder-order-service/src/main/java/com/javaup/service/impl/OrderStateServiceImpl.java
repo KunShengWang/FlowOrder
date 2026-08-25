@@ -56,6 +56,7 @@ public class OrderStateServiceImpl implements OrderStateService {
     public void confirm(String orderNo, Long userId) {
         checkParams(orderNo, userId);
         ReservationOrderEntity order = getOrder(orderNo, userId);
+        // 订单已被确认
         if (Objects.equals(order.getStatus(), CONFIRMED.getCode())) {
             return;
         }
@@ -67,9 +68,9 @@ public class OrderStateServiceImpl implements OrderStateService {
                 null,
                 Wrappers.<ReservationOrderEntity>lambdaUpdate()
                         .eq(ReservationOrderEntity::getId, order.getId())
-                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())
+                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())// 已预约
                         .gt(ReservationOrderEntity::getExpireTime, now)
-                        .set(ReservationOrderEntity::getStatus, CONFIRMED.getCode())
+                        .set(ReservationOrderEntity::getStatus, CONFIRMED.getCode())// 已确认
                         .set(ReservationOrderEntity::getConfirmedAt, now)
                         .set(ReservationOrderEntity::getUpdatedAt, now)
                         // version = version + 1 用来记录订单被成功修改的次数，并为后续乐观锁提供版本号
@@ -107,9 +108,9 @@ public class OrderStateServiceImpl implements OrderStateService {
                 null,
                 Wrappers.<ReservationOrderEntity>lambdaUpdate()
                         .eq(ReservationOrderEntity::getId, order.getId())
-                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())
+                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())// 已预约
                         .gt(ReservationOrderEntity::getExpireTime, now)
-                        .set(ReservationOrderEntity::getStatus, CANCELLED.getCode())
+                        .set(ReservationOrderEntity::getStatus, CANCELLED.getCode())// 已取消
                         .set(ReservationOrderEntity::getCanceledAt, now)
                         .set(ReservationOrderEntity::getCancelReason, cancelReason)
                         .set(ReservationOrderEntity::getUpdatedAt, now)
@@ -135,7 +136,7 @@ public class OrderStateServiceImpl implements OrderStateService {
         return orderMapper.selectList(
                 Wrappers.<ReservationOrderEntity>lambdaQuery()
                         .select(ReservationOrderEntity::getId)
-                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())
+                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())// 已预约
                         .eq(ReservationOrderEntity::getDeleted, 0)
                         .isNotNull(ReservationOrderEntity::getExpireTime)
                         .le(ReservationOrderEntity::getExpireTime, now)
@@ -164,10 +165,10 @@ public class OrderStateServiceImpl implements OrderStateService {
                 null,
                 Wrappers.<ReservationOrderEntity>lambdaUpdate()
                         .eq(ReservationOrderEntity::getId, orderId)
-                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())
+                        .eq(ReservationOrderEntity::getStatus, RESERVED.getCode())// 已预约
                         .eq(ReservationOrderEntity::getDeleted, 0)
                         .le(ReservationOrderEntity::getExpireTime, now)
-                        .set(ReservationOrderEntity::getStatus, TIMEOUT.getCode())
+                        .set(ReservationOrderEntity::getStatus, TIMEOUT.getCode())// 已超时
                         .set(ReservationOrderEntity::getCanceledAt, now)
                         .set(ReservationOrderEntity::getCancelReason, reason)
                         .set(ReservationOrderEntity::getUpdatedAt, now)

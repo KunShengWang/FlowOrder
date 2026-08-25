@@ -9,6 +9,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
+
+import static com.javaup.resource.enums.ReservationProcessingModeEnum.INSTANT;
 
 import static com.javaup.trace.TraceConstant.REQUEST_ID;
 import static com.javaup.trace.TraceConstant.TRACE_ID;
@@ -24,6 +27,8 @@ public class ReservationRequestProcessor {
 
     private final V8ReadValidationService readValidationService;
 
+    private final InstantReservationProcessor instantReservationProcessor;
+
     public ReservationRequestProcessor(
             ResourceOrderService resourceOrderService,
             ReservationRequestService requestService,
@@ -31,18 +36,24 @@ public class ReservationRequestProcessor {
             int maxRetry,
             @Value("${floworder.v8.retry-delay-seconds:2}")
             int retryDelaySeconds,
-            V8ReadValidationService readValidationService
+            V8ReadValidationService readValidationService,
+            InstantReservationProcessor instantReservationProcessor
     ) {
         this.resourceOrderService = resourceOrderService;
         this.requestService = requestService;
         this.maxRetry = maxRetry;
         this.retryDelaySeconds = retryDelaySeconds;
         this.readValidationService = readValidationService;
+        this.instantReservationProcessor = instantReservationProcessor;
     }
 
     public void process(ReservationRequestEntity request, String owner) {
         bindMdc(request);
         try {
+            if (Objects.equals(request.getProcessingMode(), INSTANT.getMode())) {
+                instantReservationProcessor.process(request, owner);
+                return;
+            }
             /*
              * 不在这里再次执行ReservationAdmissionService.check()。
              *
@@ -69,7 +80,7 @@ public class ReservationRequestProcessor {
 
             String orderNo =
                     resourceOrderService.createV3(createDto);
-            requestService.markSucceeded(request.getId(), owner, orderNo);
+            requestService.markAccepted(request.getId(), owner, orderNo);
             log.info(
                     "V8预约请求处理成功, requestId={}, orderNo={}",
                     request.getRequestId(),

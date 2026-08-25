@@ -29,6 +29,7 @@ public class V8ReadValidationService {
     public void validate(ResourceOrderCreateDto dto) {
         LocalDateTime now = LocalDateTime.now();
 
+        // 校验库存项本身是否可预约
         CompletableFuture<Void> stockFuture =
                 CompletableFuture.runAsync(
                         () -> admissionService
@@ -36,6 +37,7 @@ public class V8ReadValidationService {
                         executor
                 );
 
+        // 校验用户是否具备资格且额度足够
         CompletableFuture<Void> quotaFuture =
                 CompletableFuture.runAsync(
                         () -> admissionService

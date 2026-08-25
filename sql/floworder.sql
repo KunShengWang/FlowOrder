@@ -76,9 +76,10 @@ CREATE TABLE fo_reservation_request (
     resource_id BIGINT NOT NULL,
     stock_item_id BIGINT NOT NULL,
     quantity INT NOT NULL,
+    processing_mode TINYINT NOT NULL DEFAULT 0 COMMENT '处理模式：0 V8持久化异步 1 Instant即时抢票',
     order_no VARCHAR(64) DEFAULT NULL,
-    status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 10处理中 20成功 30待重试 40失败 50人工审核',
-    order_status TINYINT DEFAULT NULL COMMENT '订单履约状态：10已预约 20已确认 30已取消 40已超时',
+    status TINYINT NOT NULL DEFAULT 0 COMMENT '0待处理 10处理中 20已受理 30待重试 40失败 50人工审核',
+    order_status TINYINT DEFAULT NULL COMMENT '订单履约状态：10已预约 20已确认 30已取消 40已超时 50创建失败',
     latest_order_event_type VARCHAR(64) DEFAULT NULL COMMENT '最后一次已处理订单状态事件',
     latest_order_event_time DATETIME DEFAULT NULL COMMENT '最后一次已处理订单状态事件发生时间',
     order_event_version INT NOT NULL DEFAULT 0 COMMENT '订单状态事件本地递增版本',
@@ -120,7 +121,8 @@ CREATE TABLE fo_reservation_order (
     UNIQUE KEY uk_request_id (request_id),
     KEY idx_user_id (user_id),
     KEY idx_stock_item_id (stock_item_id),
-    KEY idx_status_expire_time (status, expire_time)
+    KEY idx_status_expire_time (status, expire_time),
+    KEY idx_incident_scope_updated_id_status (updated_at, id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='预约订单表';
 
 ALTER TABLE fo_reservation_order

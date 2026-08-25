@@ -125,8 +125,8 @@ public class OrderStateMessageServiceImpl implements OrderStateMessageService {
                 null,
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
-                        .in(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode(), ORDER_CREATED.getCode())
-                        .set(StockDeductRecordEntity::getStatus, SOLD.getCode())
+                        .in(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode(), ORDER_CREATED.getCode())// 已预扣、订单已创建
+                        .set(StockDeductRecordEntity::getStatus, SOLD.getCode())// 库存已确认成交
         );
         if (recordRows != 1) {
             throw new IllegalStateException("库存预扣记录成交失败");
@@ -164,8 +164,8 @@ public class OrderStateMessageServiceImpl implements OrderStateMessageService {
                 null,
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
-                        .in(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode(), ORDER_CREATED.getCode())
-                        .set(StockDeductRecordEntity::getStatus,RELEASED.getCode())
+                        .in(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode(), ORDER_CREATED.getCode())// 已预扣、订单已创建
+                        .set(StockDeductRecordEntity::getStatus,RELEASED.getCode())// 库存已释放
                         .set(StockDeductRecordEntity::getReleaseReason, "订单取消或超时")
         );
         if (recordRows != 1) {

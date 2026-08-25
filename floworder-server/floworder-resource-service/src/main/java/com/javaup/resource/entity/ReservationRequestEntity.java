@@ -22,6 +22,8 @@ public class ReservationRequestEntity {
     private Long stockItemId;
     private Integer quantity;
 
+    private Integer processingMode;
+
     private String orderNo;
     private Integer status;
     private Integer orderStatus;

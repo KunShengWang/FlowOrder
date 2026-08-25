@@ -164,7 +164,7 @@ public class OrderCreateMessageServiceImpl implements OrderCreateMessageService 
         outbox.setExchangeName(ORDER_RESULT_EXCHANGE);
         outbox.setRoutingKey(ORDER_RESULT_ROUTING_KEY);
         outbox.setContent(content);
-        outbox.setStatus(0);
+        outbox.setStatus(0);// 待发送
         outbox.setRetryCount(0);
         outbox.setNextRetryTime(LocalDateTime.now());
         outbox.setCreatedAt(LocalDateTime.now());

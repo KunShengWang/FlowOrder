@@ -8,6 +8,9 @@ import com.javaup.resource.entity.StockItemEntity;
 import com.javaup.resource.mapper.MqConsumeLogMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
+import com.javaup.resource.mapper.ReservationRequestMapper;
+import com.javaup.resource.entity.ReservationRequestEntity;
+import com.javaup.resource.enums.ReservationRequestStatusEnum;
 import com.javaup.resource.mq.service.OrderResultMessageService;
 import com.javaup.resource.service.ReservationAdmissionService;
 import jakarta.annotation.Resource;
@@ -37,6 +40,9 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
     @Resource
     private ReservationAdmissionService reservationAdmissionService;
 
+    @Resource
+    private ReservationRequestMapper reservationRequestMapper;
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long handle(OrderCreateResultMessage message) {
@@ -52,14 +58,74 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
 
         if (Boolean.TRUE.equals(message.getSuccess())) {
             confirm(record, message.getOrderNo());
+            markRequestOrderCreated(message, record);
         } else {
             release(record, message.getErrorMessage());
+            markRequestOrderCreateFailed(message, record);
         }
 
         markConsumed(log.getId());
         return Boolean.FALSE.equals(message.getSuccess())
                 ? record.getStockItemId()
                 : null;
+    }
+
+    private void markRequestOrderCreated(
+            OrderCreateResultMessage message,
+            StockDeductRecordEntity record
+    ) {
+        ReservationRequestEntity request = findRequest(message.getRequestId());
+        if (request == null) {
+            return;
+        }
+        int rows = reservationRequestMapper.markOrderCreated(
+                message.getRequestId(),
+                record.getOrderNo()
+        );
+        if (rows == 1) {
+            return;
+        }
+        request = findRequest(message.getRequestId());
+        if (request == null
+                || !Objects.equals(request.getStatus(), ReservationRequestStatusEnum.ACCEPTED.getStatus())
+                || !Objects.equals(request.getOrderStatus(), 10)
+                || !Objects.equals(request.getOrderNo(), record.getOrderNo())) {
+            throw new IllegalStateException("预约请求订单创建成功状态更新失败");
+        }
+    }
+
+    private void markRequestOrderCreateFailed(
+            OrderCreateResultMessage message,
+            StockDeductRecordEntity record
+    ) {
+        ReservationRequestEntity request = findRequest(message.getRequestId());
+        if (request == null) {
+            return;
+        }
+        int rows = reservationRequestMapper.markOrderCreateFailed(
+                message.getRequestId(),
+                record.getOrderNo(),
+                limitReason(message.getErrorMessage()),
+                LocalDateTime.now()
+        );
+        if (rows == 1) {
+            return;
+        }
+        request = findRequest(message.getRequestId());
+        if (request == null
+                || !Objects.equals(request.getStatus(), ReservationRequestStatusEnum.FAILED.getStatus())
+                || !Objects.equals(request.getOrderStatus(), 50)
+                || !Objects.equals(request.getOrderNo(), record.getOrderNo())) {
+            throw new IllegalStateException("预约请求订单创建失败状态更新失败");
+        }
+    }
+
+    private ReservationRequestEntity findRequest(String requestId) {
+        return reservationRequestMapper.selectOne(
+                Wrappers.<ReservationRequestEntity>lambdaQuery()
+                        .eq(ReservationRequestEntity::getRequestId, requestId)
+                        .last("limit 1")
+        );
     }
 
     private void confirm(StockDeductRecordEntity record, String orderNo) {
@@ -81,8 +147,8 @@ public class OrderResultMessageServiceImpl implements OrderResultMessageService 
                 Wrappers.<StockDeductRecordEntity>lambdaUpdate()
                         .eq(StockDeductRecordEntity::getId, record.getId())
                         .eq(StockDeductRecordEntity::getCreateMode, 3)
-                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode())
-                        .set(StockDeductRecordEntity::getStatus, ORDER_CREATED.getCode())
+                        .eq(StockDeductRecordEntity::getStatus, PRE_DEDUCTED.getCode())// 已预扣
+                        .set(StockDeductRecordEntity::getStatus, ORDER_CREATED.getCode())// 订单已创建
                         .set(StockDeductRecordEntity::getOrderNo, orderNo)
         );
         if (rows != 1) {

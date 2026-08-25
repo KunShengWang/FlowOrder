@@ -8,6 +8,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 
+/**
+ * StockDeductCompensationTask 解决的不是 V8/Instant 的问题，它只处理 V2 同步模式（createMode=2）的卡死预扣记录
+ */
 @Slf4j
 @Component
 @ConditionalOnProperty(
@@ -27,6 +30,8 @@ public class StockDeductCompensationTask {
     )
     public void compensateExpiredDeductRecords() {
         try {
+            // 库存预扣补偿，扫描"卡在中间态"且 nextRetryTime <= now 的库存预扣记录，以订单为权威做补偿
+            // 卡在 PRE_DEDUCTED 的本质是"预扣成功但订单创建结果未知"，可能诱因是 order-service 异常/网络超时导致建单结果不确定
             compensationService.compensateExpiredRecords();
         } catch (RuntimeException e) {
             // 防止整个定时任务因为一次异常停止

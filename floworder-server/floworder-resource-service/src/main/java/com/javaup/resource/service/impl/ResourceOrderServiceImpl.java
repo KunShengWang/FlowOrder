@@ -40,6 +40,7 @@ import static com.javaup.constant.RedisConstant.FLOWORDER_STOCK;
 import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_EXIST;
 import static com.javaup.enums.BaseCodeEnum.StockItem_NOT_OPEN;
 import static com.javaup.enums.StockLuaResultCodeEnum.STOCK_CACHE_MISSING;
+import static com.javaup.resource.enums.StockDeductStatusEnum.*;
 import static com.javaup.trace.TraceConstant.TRACE_ID;
 
 @Service
@@ -242,6 +243,71 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
             invalidateRedisSafely(stockKey,e);
             throw e;
         }
+    }
+
+    @Override
+    public String createInstantAfterAdmission(
+            ResourceOrderCreateDto createDto,
+            Long requestDbId,
+            String owner
+    ) {
+        StockDeductRecordEntity oldRecord = getDeductRecordByRequestId(createDto.getRequestId());
+        if (oldRecord != null) {
+            return handleExistingInstantRecord(oldRecord, createDto);
+        }
+        String deductNo = generateDeductNo();
+        String orderNo = generateOrderNo();
+        String messageId = UUID.randomUUID().toString();
+        try {
+            StockDeductRecordEntity record = buildV3DeductRecord(createDto, deductNo, orderNo);
+            OrderCreateMessage message = buildOrderCreateMessage(createDto, deductNo, orderNo, messageId);
+            MqOutboxEntity outbox = buildOrderCreateOutbox(message);
+            stockDeductService.preDeductAndSaveOutboxAndAcceptRequest(
+                    createDto,
+                    record,
+                    outbox,
+                    requestDbId,
+                    owner
+            );
+            return orderNo;
+        } catch (DuplicateKeyException exception) {
+            oldRecord = getDeductRecordByRequestId(createDto.getRequestId());
+            if (oldRecord != null) {
+                return handleExistingInstantRecord(oldRecord, createDto);
+            }
+            throw exception;
+        }
+    }
+
+    /**
+     * Instant恢复不能直接复用同步版本的旧记录判断。
+     * MANUAL_REVIEW代表结果未知，必须继续保留Redis准入，不能包装成BizException后触发释放。
+     */
+    private String handleExistingInstantRecord(
+            StockDeductRecordEntity record,
+            ResourceOrderCreateDto dto
+    ) {
+        boolean sameRequest = Objects.equals(record.getUserId(), dto.getUserId())
+                && Objects.equals(record.getResourceId(), dto.getResourceId())
+                && Objects.equals(record.getStockItemId(), dto.getStockItemId())
+                && Objects.equals(record.getQuantity(), dto.getQuantity());
+        if (!sameRequest) {
+            throw new BizException("requestId已被其他请求使用，不能修改预约参数");
+        }
+        if ((Objects.equals(record.getStatus(), PRE_DEDUCTED.getCode())
+                || Objects.equals(record.getStatus(), ORDER_CREATED.getCode())
+                || Objects.equals(record.getStatus(), SOLD.getCode()))
+                && StringUtils.hasText(record.getOrderNo())) {
+            return record.getOrderNo();
+        }
+        if (Objects.equals(record.getStatus(), RELEASED.getCode())
+                || Objects.equals(record.getStatus(), FAILED.getCode())) {
+            throw new BizException("该requestId对应的预约请求已明确失败，请更换requestId后重试");
+        }
+        if (Objects.equals(record.getStatus(), MANUAL_REVIEW.getCode())) {
+            throw new IllegalStateException("订单创建结果仍需人工确认");
+        }
+        throw new IllegalStateException("Instant预扣记录状态无法自动确认");
     }
 
     /**
@@ -697,7 +763,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         record.setStockItemId(createDto.getStockItemId());
         record.setQuantity(createDto.getQuantity());
         record.setRequestId(createDto.getRequestId());
-        record.setStatus(STOCK_DEDUCT_STATUS_PRE_DEDUCTED);
+        record.setStatus(STOCK_DEDUCT_STATUS_PRE_DEDUCTED);// 已预扣状态
         record.setCreateMode(CREATE_MODE_ASYNC);
         // 订单超时时间，不是MQ发送重试时间
         record.setExpireTime(now.plusMinutes(DEFAULT_EXPIRE_MINUTES));
@@ -753,7 +819,7 @@ public class ResourceOrderServiceImpl implements ResourceOrderService {
         outbox.setExchangeName(ORDER_CREATE_EXCHANGE);
         outbox.setRoutingKey(ORDER_CREATE_ROUTING_KEY);
         outbox.setContent(content);
-        outbox.setStatus(OUTBOX_STATUS_NEW);
+        outbox.setStatus(OUTBOX_STATUS_NEW);// 待发送状态
         outbox.setRetryCount(0);
         outbox.setNextRetryTime(now);
         outbox.setClaimUntil(null);

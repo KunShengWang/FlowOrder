@@ -2,8 +2,10 @@ package com.javaup.resource.controller;
 
 import com.javaup.common.ApiResponse;
 import com.javaup.dto.ResourceOrderCreateDto;
+import com.javaup.dto.InstantReservationResultDto;
 import com.javaup.enums.ResourceOrderVersionEnum;
 import com.javaup.resource.service.ReservationRequestService;
+import com.javaup.resource.service.InstantReservationService;
 import com.javaup.resource.service.strategy.ResourceOrderContext;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 
 import static com.javaup.trace.TraceConstant.REQUEST_ID;
+import static com.javaup.trace.TraceConstant.TRACE_ID;
 import com.javaup.dto.ReservationRequestResultDto;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -28,6 +31,9 @@ public class ResourceOrderController {
 
     @Resource
     private ReservationRequestService reservationRequestService;
+
+    @Resource
+    private InstantReservationService instantReservationService;
 
     @PostMapping("/create/v1")
     public ApiResponse<String> createOrderV1(@RequestBody ResourceOrderCreateDto createDto) {
@@ -47,6 +53,28 @@ public class ResourceOrderController {
     @PostMapping("/create/v8")
     public ApiResponse<String> createOrderV8(@RequestBody ResourceOrderCreateDto createDto) {
         return create(createDto, ResourceOrderVersionEnum.V8_VERSION);
+    }
+
+    @PostMapping("/create/instant")
+    public ApiResponse<InstantReservationResultDto> createInstant(
+            @RequestBody ResourceOrderCreateDto createDto
+    ) {
+        MDC.put(REQUEST_ID, createDto.getRequestId());
+        try {
+            log.info(
+                    "收到Instant预约请求, userId={}, resourceId={}, stockItemId={}, quantity={}, requestId={}",
+                    createDto.getUserId(),
+                    createDto.getResourceId(),
+                    createDto.getStockItemId(),
+                    createDto.getQuantity(),
+                    createDto.getRequestId()
+            );
+            return ApiResponse.success(
+                    instantReservationService.submit(createDto, MDC.get(TRACE_ID))
+            );
+        } finally {
+            MDC.remove(REQUEST_ID);
+        }
     }
 
     @GetMapping("/request/{requestId}")

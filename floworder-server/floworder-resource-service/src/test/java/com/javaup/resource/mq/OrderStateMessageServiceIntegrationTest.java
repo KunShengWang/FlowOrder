@@ -3,10 +3,12 @@ package com.javaup.resource.mq;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.javaup.dto.OrderStateChangedMessage;
 import com.javaup.resource.entity.MqConsumeLogEntity;
+import com.javaup.resource.entity.ReservationRequestEntity;
 import com.javaup.resource.entity.StockDeductRecordEntity;
 import com.javaup.resource.entity.StockItemEntity;
 import com.javaup.resource.entity.UserReservationQuotaEntity;
 import com.javaup.resource.mapper.MqConsumeLogMapper;
+import com.javaup.resource.mapper.ReservationRequestMapper;
 import com.javaup.resource.mapper.StockDeductRecordMapper;
 import com.javaup.resource.mapper.StockItemMapper;
 import com.javaup.resource.mapper.UserReservationQuotaMapper;
@@ -14,7 +16,10 @@ import com.javaup.resource.mq.service.OrderStateMessageService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.redisson.api.RedissonClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -31,9 +36,17 @@ import static org.junit.jupiter.api.Assertions.*;
         "spring.rabbitmq.listener.simple.auto-startup=false",
         "floworder.mq.outbox-publish-enabled=false",
         "floworder.compensation.enabled=false",
+        "floworder.instant.enabled=false",
+        "floworder.v8.enabled=false",
         "floworder.admin.enabled=false"
 })
 class OrderStateMessageServiceIntegrationTest {
+
+    @MockitoBean
+    private RedissonClient redissonClient;
+
+    @MockitoBean
+    private StringRedisTemplate stringRedisTemplate;
 
     @Resource
     private OrderStateMessageService messageService;
@@ -50,9 +63,13 @@ class OrderStateMessageServiceIntegrationTest {
     @Resource
     private UserReservationQuotaMapper quotaMapper;
 
+    @Resource
+    private ReservationRequestMapper requestMapper;
+
     private final List<Long> stockItemIds = new ArrayList<>();
     private final List<Long> quotaIds = new ArrayList<>();
     private final List<String> deductNos = new ArrayList<>();
+    private final List<Long> requestDbIds = new ArrayList<>();
 
     @AfterEach
     void cleanData() {
@@ -66,6 +83,7 @@ class OrderStateMessageServiceIntegrationTest {
                             .eq(StockDeductRecordEntity::getDeductNo, deductNo)
             );
         }
+        requestDbIds.forEach(requestMapper::deleteById);
         quotaIds.forEach(quotaMapper::deleteById);
         stockItemIds.forEach(stockItemMapper::deleteById);
     }
@@ -81,6 +99,27 @@ class OrderStateMessageServiceIntegrationTest {
         assertStock(fixture, 7, 0, 3, SOLD.getCode());
         assertQuota(fixture, 3);
         assertEquals(1L, consumeLogCount(fixture.deductNo()));
+    }
+
+    @Test
+    void stateEventBeforeOrderCreatedResultShouldRollbackEverything() {
+        Fixture fixture = insertFixture();
+        assertEquals(1, requestMapper.update(
+                null,
+                Wrappers.<ReservationRequestEntity>lambdaUpdate()
+                        .eq(ReservationRequestEntity::getId, fixture.requestDbId())
+                        .set(ReservationRequestEntity::getOrderStatus, null)
+        ));
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> messageService.handle(stateMessage(fixture, ORDER_CONFIRMED))
+        );
+
+        assertStock(fixture, 7, 3, 0, ORDER_CREATED.getCode());
+        assertQuota(fixture, 3);
+        assertEquals(0L, consumeLogCount(fixture.deductNo()));
+        assertNull(requestMapper.selectById(fixture.requestDbId()).getOrderStatus());
     }
 
     @Test
@@ -180,6 +219,25 @@ class OrderStateMessageServiceIntegrationTest {
         assertEquals(1, deductRecordMapper.insert(record));
         deductNos.add(deductNo);
 
+        ReservationRequestEntity request = new ReservationRequestEntity();
+        request.setRequestId(record.getRequestId());
+        request.setTraceId("trace-" + suffix);
+        request.setUserId(record.getUserId());
+        request.setResourceId(record.getResourceId());
+        request.setStockItemId(record.getStockItemId());
+        request.setQuantity(record.getQuantity());
+        request.setProcessingMode(1);
+        request.setOrderNo(record.getOrderNo());
+        request.setStatus(20);
+        request.setOrderStatus(RESERVED.getCode());
+        request.setOrderEventVersion(0);
+        request.setRetryCount(0);
+        request.setVersion(0);
+        request.setCreatedAt(now);
+        request.setUpdatedAt(now);
+        assertEquals(1, requestMapper.insert(request));
+        requestDbIds.add(request.getId());
+
         UserReservationQuotaEntity quota = new UserReservationQuotaEntity();
         quota.setResourceId(1L);
         quota.setStockItemId(stockItemId);
@@ -195,7 +253,15 @@ class OrderStateMessageServiceIntegrationTest {
         assertEquals(1, quotaMapper.insert(quota));
         quotaIds.add(quota.getId());
 
-        return new Fixture(stockItemId, deductNo, record.getOrderNo(), record.getUserId(), 3);
+        return new Fixture(
+                stockItemId,
+                deductNo,
+                record.getOrderNo(),
+                record.getRequestId(),
+                request.getId(),
+                record.getUserId(),
+                3
+        );
     }
 
     private OrderStateChangedMessage stateMessage(Fixture fixture, String eventType) {
@@ -203,6 +269,7 @@ class OrderStateMessageServiceIntegrationTest {
         message.setMessageId(UUID.randomUUID().toString());
         message.setEventType(eventType);
         message.setOrderNo(fixture.orderNo());
+        message.setRequestId(fixture.requestId());
         message.setDeductNo(fixture.deductNo());
         message.setStockItemId(fixture.stockItemId());
         message.setQuantity(fixture.quantity());
@@ -266,6 +333,8 @@ class OrderStateMessageServiceIntegrationTest {
             Long stockItemId,
             String deductNo,
             String orderNo,
+            String requestId,
+            Long requestDbId,
             Long userId,
             Integer quantity) {
     }
