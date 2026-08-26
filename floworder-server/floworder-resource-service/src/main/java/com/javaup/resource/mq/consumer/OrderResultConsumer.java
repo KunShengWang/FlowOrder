@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.javaup.dto.OrderCreateResultMessage;
 import com.javaup.resource.mq.service.MqDeadLetterService;
 import com.javaup.resource.mq.service.OrderResultMessageService;
+import com.javaup.resource.mq.metrics.OrderResultListenerMetrics;
 import com.javaup.resource.service.InstantAdmissionService;
 import com.rabbitmq.client.Channel;
 import jakarta.annotation.Resource;
@@ -44,11 +45,15 @@ public class OrderResultConsumer {
     @Resource
     private InstantAdmissionService instantAdmissionService;
 
+    @Resource
+    private OrderResultListenerMetrics listenerMetrics;
+
     @RabbitListener(
             queues = ORDER_RESULT_QUEUE,
             containerFactory = "orderResultListenerContainerFactory"
     )
     public void consume(Message rabbitMessage, Channel channel) throws IOException {
+        listenerMetrics.consumed();
         long tag = rabbitMessage.getMessageProperties().getDeliveryTag();
         OrderCreateResultMessage result;
         try {
@@ -71,7 +76,9 @@ public class OrderResultConsumer {
             Exception lastException = null;
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 try {
+                    long transactionStartedAt = System.nanoTime();
                     Long stockItemId = resultService.handle(result);
+                    listenerMetrics.committed(System.nanoTime() - transactionStartedAt);
                     if (stockItemId != null) {
                         stringRedisTemplate.delete(FLOWORDER_STOCK + stockItemId);
                         instantAdmissionService.markReleasedAfterCacheInvalidation(result.getRequestId());

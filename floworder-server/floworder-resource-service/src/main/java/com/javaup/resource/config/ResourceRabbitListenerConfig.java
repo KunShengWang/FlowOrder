@@ -1,5 +1,6 @@
 package com.javaup.resource.config;
 
+import com.javaup.resource.mq.metrics.OrderResultListenerMetrics;
 import org.springframework.amqp.core.AcknowledgeMode;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -24,20 +25,22 @@ public class ResourceRabbitListenerConfig {
     @Bean
     public ThreadPoolTaskExecutor orderResultConsumerExecutor(
             @Value("${floworder.thread-pool.order-result-consumer.core-size:2}") int coreSize,
-            @Value("${floworder.thread-pool.order-result-consumer.max-size:4}") int maxSize) {
-        return buildExecutor("order-result-consumer-", coreSize, maxSize);
+            @Value("${floworder.thread-pool.order-result-consumer.max-size:4}") int maxSize,
+            @Value("${floworder.thread-pool.order-result-consumer.queue-capacity:0}") int queueCapacity) {
+        return buildExecutor("order-result-consumer-", coreSize, maxSize, queueCapacity);
     }
 
     @Bean
     public ThreadPoolTaskExecutor orderStateConsumerExecutor(
             @Value("${floworder.thread-pool.order-state-consumer.core-size:1}") int coreSize,
-            @Value("${floworder.thread-pool.order-state-consumer.max-size:2}") int maxSize) {
-        return buildExecutor("order-state-consumer-", coreSize, maxSize);
+            @Value("${floworder.thread-pool.order-state-consumer.max-size:2}") int maxSize,
+            @Value("${floworder.thread-pool.order-state-consumer.queue-capacity:0}") int queueCapacity) {
+        return buildExecutor("order-state-consumer-", coreSize, maxSize, queueCapacity);
     }
 
     @Bean
     public ThreadPoolTaskExecutor deadLetterConsumerExecutor() {
-        return buildExecutor("dead-letter-consumer-", 1, 1);
+        return buildExecutor("dead-letter-consumer-", 1, 1, 0);
     }
 
     @Bean
@@ -45,9 +48,15 @@ public class ResourceRabbitListenerConfig {
             ConnectionFactory connectionFactory,
             @Qualifier("orderResultConsumerExecutor")
             ThreadPoolTaskExecutor orderResultConsumerExecutor,
+            OrderResultListenerMetrics listenerMetrics,
             @Value("${floworder.rabbit.order-result.concurrent-consumers:2}") int concurrentConsumers,
             @Value("${floworder.rabbit.order-result.max-concurrent-consumers:4}") int maxConcurrentConsumers,
             @Value("${floworder.rabbit.order-result.prefetch:10}") int prefetch) {
+        listenerMetrics.bindExecutor(
+                orderResultConsumerExecutor,
+                concurrentConsumers,
+                maxConcurrentConsumers
+        );
         return buildFactory(
                 connectionFactory,
                 orderResultConsumerExecutor,
@@ -88,12 +97,22 @@ public class ResourceRabbitListenerConfig {
         );
     }
 
-    private ThreadPoolTaskExecutor buildExecutor(String threadNamePrefix, int coreSize, int maxSize) {
+    private ThreadPoolTaskExecutor buildExecutor(
+            String threadNamePrefix,
+            int coreSize,
+            int maxSize,
+            int queueCapacity
+    ) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix(threadNamePrefix);
         executor.setCorePoolSize(coreSize);
         executor.setMaxPoolSize(maxSize);
-        executor.setQueueCapacity(100);
+        /*
+         * Rabbit consumer是长生命周期任务。这里不能使用普通任务型线程池的排队策略：
+         * core线程被基础consumer永久占用后，扩容consumer会进入队列且永远等不到线程，
+         * ThreadPoolExecutor也不会继续扩到maxPoolSize，最终触发60秒启动超时。
+         */
+        executor.setQueueCapacity(queueCapacity);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(10);
         executor.initialize();

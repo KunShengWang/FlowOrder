@@ -91,9 +91,11 @@ floworder:
     order-result-consumer:
       core-size: 2
       max-size: 4
+      queue-capacity: 0
     order-state-consumer:
       core-size: 1
       max-size: 2
+      queue-capacity: 0
     v8-dispatch:
       size: 1
     v8-validation:
