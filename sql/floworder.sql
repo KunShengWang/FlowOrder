@@ -183,8 +183,10 @@ CREATE TABLE fo_mq_outbox (
     content TEXT NOT NULL COMMENT '消息JSON内容',
     status TINYINT NOT NULL DEFAULT 0 COMMENT '0待发送 10发送中 20已确认 30待重试 40死亡',
     retry_count INT NOT NULL DEFAULT 0 COMMENT '发送重试次数',
-    next_retry_time DATETIME DEFAULT NULL COMMENT '下次发送时间',
-    claim_until DATETIME DEFAULT NULL COMMENT '发送任务抢占租约截止时间',
+    next_retry_time DATETIME(3) DEFAULT NULL COMMENT '下次发送时间',
+    claim_owner VARCHAR(128) DEFAULT NULL COMMENT '发布租约实例标识',
+    claim_token VARCHAR(64) DEFAULT NULL COMMENT '单次发布租约fencing token',
+    claim_until DATETIME(3) DEFAULT NULL COMMENT '发送任务抢占租约截止时间',
     last_error VARCHAR(1024) DEFAULT NULL COMMENT '最后发送错误',
     sent_at DATETIME DEFAULT NULL COMMENT 'Broker确认时间',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -194,8 +196,8 @@ CREATE TABLE fo_mq_outbox (
         (producer_service, biz_key, message_type),
     KEY idx_producer_status_retry
         (producer_service, status, next_retry_time),
-    KEY idx_status_claim
-        (status, claim_until)
+    KEY idx_producer_status_claim
+        (producer_service, status, claim_until)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     COMMENT='MQ事务Outbox表';
 

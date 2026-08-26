@@ -1,31 +1,40 @@
 package com.javaup.mq.publisher;
 
 import com.javaup.entity.MqOutboxEntity;
-import com.javaup.mq.service.MqOutboxService;
-import jakarta.annotation.Resource;
-import lombok.extern.slf4j.Slf4j;
+import com.javaup.mq.OutboxPublishResult;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageDeliveryMode;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import static com.javaup.mq.OutboxPublishResult.Outcome.*;
 
 @Component
-@Slf4j
 public class OrderResultOutboxPublisher {
 
-    @Resource
-    private RabbitTemplate rabbitTemplate;
+    private final RabbitTemplate rabbitTemplate;
+    private final long confirmTimeoutMillis;
 
-    @Resource
-    private MqOutboxService mqOutboxService;
+    public OrderResultOutboxPublisher(
+            RabbitTemplate rabbitTemplate,
+            @Value("${floworder.mq.outbox.confirm-timeout-ms:5000}") long confirmTimeoutMillis
+    ) {
+        this.rabbitTemplate = rabbitTemplate;
+        this.confirmTimeoutMillis = Math.max(1, confirmTimeoutMillis);
+    }
 
-    public void publish(MqOutboxEntity outbox) {
-        CorrelationData correlationData = new CorrelationData(outbox.getMessageId());
+    public OutboxPublishResult publish(MqOutboxEntity outbox, String claimToken) {
+        long startedNanos = System.nanoTime();
+        CorrelationData correlationData = new CorrelationData(
+                outbox.getMessageId() + ":" + claimToken
+        );
 
         try {
             MessageProperties properties = new MessageProperties();
@@ -43,28 +52,41 @@ public class OrderResultOutboxPublisher {
                     correlationData
             );
 
-            CorrelationData.Confirm confirm = correlationData.getFuture().get(5, TimeUnit.SECONDS);
-
-            if (!confirm.isAck()) {
-                throw new IllegalStateException("Broker NACK: " + confirm.getReason());
-            }
+            CorrelationData.Confirm confirm = correlationData.getFuture()
+                    .get(confirmTimeoutMillis, TimeUnit.MILLISECONDS);
+            long latencyMillis = elapsedMillis(startedNanos);
 
             if (correlationData.getReturned() != null) {
-                throw new IllegalStateException("消息无法路由到队列");
+                return OutboxPublishResult.failed(
+                        RETURNED,
+                        "消息无法路由到队列: " + correlationData.getReturned().getReplyText(),
+                        latencyMillis
+                );
             }
-        } catch (Exception exception) {
-            log.error(
-                    "Outbox消息发送失败, id={}, messageId={}",
-                    outbox.getId(),
-                    outbox.getMessageId(),
-                    exception
+            if (!confirm.isAck()) {
+                return OutboxPublishResult.failed(
+                        NACK,
+                        "Broker NACK: " + confirm.getReason(),
+                        latencyMillis
+                );
+            }
+            return OutboxPublishResult.ack(latencyMillis);
+        } catch (TimeoutException exception) {
+            return OutboxPublishResult.failed(
+                    TIMEOUT,
+                    "等待Publisher Confirm超时",
+                    elapsedMillis(startedNanos)
             );
-
-            mqOutboxService.markFailed(outbox.getId(), outbox.getRetryCount(), exception.getMessage());
-            return;
+        } catch (Exception exception) {
+            return OutboxPublishResult.failed(
+                    EXCEPTION,
+                    exception.getMessage(),
+                    elapsedMillis(startedNanos)
+            );
         }
+    }
 
-        // Confirm ACK且没有Return，才标记发送成功
-        mqOutboxService.markSent(outbox.getId());
+    private long elapsedMillis(long startedNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
     }
 }

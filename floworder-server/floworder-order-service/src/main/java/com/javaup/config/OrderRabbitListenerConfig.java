@@ -12,6 +12,14 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 @Configuration
 public class OrderRabbitListenerConfig {
 
+    private final boolean autoStartup;
+
+    public OrderRabbitListenerConfig(
+            @Value("${spring.rabbitmq.listener.simple.auto-startup:true}") boolean autoStartup
+    ) {
+        this.autoStartup = autoStartup;
+    }
+
     @Bean
     public ThreadPoolTaskExecutor orderCreateConsumerExecutor(
             @Value("${floworder.thread-pool.order-create-consumer.core-size:2}") int coreSize,
@@ -43,6 +51,7 @@ public class OrderRabbitListenerConfig {
         factory.setConcurrentConsumers(concurrentConsumers);
         factory.setMaxConcurrentConsumers(maxConcurrentConsumers);
         factory.setPrefetchCount(prefetch);
+        factory.setAutoStartup(autoStartup);
         return factory;
     }
 }

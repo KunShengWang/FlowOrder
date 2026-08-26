@@ -46,22 +46,25 @@ class MqOutboxServiceIntegrationTest {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
-        Callable<Boolean> task = () -> {
+        Callable<String> task = () -> {
             ready.countDown();
             start.await();
-            return outboxService.claim(outbox.getId());
+            return outboxService.claim(outbox.getId(), "test-instance", 60);
         };
 
         try {
-            Future<Boolean> first = executor.submit(task);
-            Future<Boolean> second = executor.submit(task);
+            Future<String> first = executor.submit(task);
+            Future<String> second = executor.submit(task);
             assertTrue(ready.await(3, TimeUnit.SECONDS));
             start.countDown();
 
-            int winners = (first.get(5, TimeUnit.SECONDS) ? 1 : 0)
-                    + (second.get(5, TimeUnit.SECONDS) ? 1 : 0);
+            int winners = (first.get(5, TimeUnit.SECONDS) != null ? 1 : 0)
+                    + (second.get(5, TimeUnit.SECONDS) != null ? 1 : 0);
             assertEquals(1, winners);
-            assertEquals(10, outboxMapper.selectById(outbox.getId()).getStatus());
+            MqOutboxEntity claimed = outboxMapper.selectById(outbox.getId());
+            assertEquals(10, claimed.getStatus());
+            assertNotNull(claimed.getClaimToken());
+            assertEquals("test-instance", claimed.getClaimOwner());
         } finally {
             executor.shutdownNow();
         }
@@ -71,7 +74,7 @@ class MqOutboxServiceIntegrationTest {
     void futureRetryShouldNotBeClaimed() {
         MqOutboxEntity outbox = insertOutbox(ORDER_SERVICE, 30, LocalDateTime.now().plusMinutes(1), null, 1);
 
-        assertFalse(outboxService.claim(outbox.getId()));
+        assertNull(outboxService.claim(outbox.getId(), "test-instance", 60));
         assertFalse(outboxService.findSendable(100).stream()
                 .anyMatch(record -> record.getId().equals(outbox.getId())));
     }
@@ -80,7 +83,8 @@ class MqOutboxServiceIntegrationTest {
     void failedMessageShouldRetryAndEventuallyBecomeDead() {
         MqOutboxEntity outbox = insertOutbox(ORDER_SERVICE, 10, LocalDateTime.now(), null, 0);
 
-        outboxService.markFailed(outbox.getId(), 0, "first failure");
+        assertTrue(outboxService.markFailed(
+                outbox.getId(), outbox.getClaimToken(), 0, "first failure"));
         MqOutboxEntity retry = outboxMapper.selectById(outbox.getId());
         assertEquals(30, retry.getStatus());
         assertEquals(1, retry.getRetryCount());
@@ -88,10 +92,12 @@ class MqOutboxServiceIntegrationTest {
 
         retry.setStatus(10);
         retry.setRetryCount(4);
+        retry.setClaimOwner("test-instance");
+        retry.setClaimToken("final-token");
         retry.setClaimUntil(LocalDateTime.now().plusSeconds(60));
         assertEquals(1, outboxMapper.updateById(retry));
 
-        outboxService.markFailed(outbox.getId(), 4, "final failure");
+        assertTrue(outboxService.markFailed(outbox.getId(), "final-token", 4, "final failure"));
         MqOutboxEntity dead = outboxMapper.selectById(outbox.getId());
         assertEquals(40, dead.getStatus());
         assertEquals(5, dead.getRetryCount());
@@ -108,11 +114,46 @@ class MqOutboxServiceIntegrationTest {
         MqOutboxEntity otherService = insertOutbox(
                 RESOURCE_SERVICE, 10, LocalDateTime.now(), LocalDateTime.now().minusSeconds(1), 0);
 
-        outboxService.reclaimExpiredClaims();
+        assertEquals(1, outboxService.reclaimExpiredClaims(100));
 
         assertEquals(30, outboxMapper.selectById(expired.getId()).getStatus());
         assertEquals(10, outboxMapper.selectById(active.getId()).getStatus());
         assertEquals(10, outboxMapper.selectById(otherService.getId()).getStatus());
+    }
+
+    @Test
+    void staleWorkerShouldNotOverwriteNewClaim() {
+        MqOutboxEntity outbox = insertOutbox(
+                ORDER_SERVICE, 10, LocalDateTime.now(), LocalDateTime.now().minusSeconds(1), 0);
+        String oldToken = outbox.getClaimToken();
+
+        assertEquals(1, outboxService.reclaimExpiredClaims(10));
+        String newToken = outboxService.claim(outbox.getId(), "new-instance", 60);
+        assertNotNull(newToken);
+        assertNotEquals(oldToken, newToken);
+
+        assertFalse(outboxService.markSent(outbox.getId(), oldToken));
+        assertFalse(outboxService.markFailed(outbox.getId(), oldToken, 0, "stale"));
+        assertFalse(outboxService.releaseClaim(outbox.getId(), oldToken, 200, "stale"));
+        assertTrue(outboxService.markSent(outbox.getId(), newToken));
+        assertEquals(20, outboxMapper.selectById(outbox.getId()).getStatus());
+    }
+
+    @Test
+    void localBackpressureShouldDelayWithoutIncreasingRetryCount() {
+        MqOutboxEntity outbox = insertOutbox(
+                ORDER_SERVICE, 10, LocalDateTime.now(), LocalDateTime.now().plusSeconds(60), 2);
+
+        LocalDateTime before = LocalDateTime.now();
+        assertTrue(outboxService.releaseClaim(
+                outbox.getId(), outbox.getClaimToken(), 300, "local backpressure"));
+
+        MqOutboxEntity released = outboxMapper.selectById(outbox.getId());
+        assertEquals(30, released.getStatus());
+        assertEquals(2, released.getRetryCount());
+        assertTrue(released.getNextRetryTime().isAfter(before));
+        assertNull(released.getClaimToken());
+        assertNull(released.getClaimOwner());
     }
 
     private MqOutboxEntity insertOutbox(
@@ -135,6 +176,10 @@ class MqOutboxServiceIntegrationTest {
         outbox.setRetryCount(retryCount);
         outbox.setNextRetryTime(nextRetryTime);
         outbox.setClaimUntil(claimUntil);
+        if (status == 10) {
+            outbox.setClaimOwner("test-instance");
+            outbox.setClaimToken("token-" + suffix);
+        }
         outbox.setCreatedAt(now);
         outbox.setUpdatedAt(now);
         assertEquals(1, outboxMapper.insert(outbox));

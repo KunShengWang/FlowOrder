@@ -11,9 +11,9 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 public class ResourceTaskSchedulerConfig {
 
     @Bean(name = "resourceOutboxTaskScheduler", destroyMethod = "shutdown")
-    public ThreadPoolTaskScheduler resourceOutboxTaskScheduler(
-            @Value("${floworder.thread-pool.resource-outbox.size:2}") int poolSize) {
-        return buildScheduler("resource-outbox-", poolSize);
+    public ThreadPoolTaskScheduler resourceOutboxTaskScheduler() {
+        // 每实例一个scanner；多实例并发由数据库claim CAS仲裁。
+        return buildScheduler("resource-outbox-", 1);
     }
 
     @Bean(name = "stockCompensationTaskScheduler", destroyMethod = "shutdown")// Spring 容器关闭的时候，会自动调用这个 Bean 的 shutdown() 方法

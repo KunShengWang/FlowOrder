@@ -16,13 +16,15 @@ public interface MqOutboxService {
     /**
      * 抢占消息
      */
-    boolean claim(Long id);
+    String claim(Long id, String claimOwner, long leaseSeconds);
 
-    void markSent(Long id);
+    boolean markSent(Long id, String claimToken);
 
-    void markFailed(Long id, Integer currentRetryCount, String error);
+    boolean markFailed(Long id, String claimToken, Integer currentRetryCount, String error);
 
-    void reclaimExpiredClaims();
+    boolean releaseClaim(Long id, String claimToken, long delayMillis, String error);
+
+    int reclaimExpiredClaims(int limit);
 
     List<MqOutboxAdminDto> findDead(int limit);
 

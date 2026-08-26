@@ -43,9 +43,24 @@ floworder:
     enabled: false
   incident-scope:
     internal-token: ${FLOWORDER_INCIDENT_SCOPE_INTERNAL_TOKEN:}
+  mq:
+    outbox:
+      scan-delay-ms: 200
+      batch-size: 20
+      lease-seconds: 60
+      confirm-timeout-ms: 5000
+      max-retry: 5
+      retry-base-ms: 5000
+      retry-max-ms: 300000
+      retry-jitter-ms: 1000
+      local-backpressure-delay-ms: 250
+      local-backpressure-jitter-ms: 250
+      publisher:
+        workers: 2
+        queue-capacity: 4
+        max-in-flight: 6
+        shutdown-await-seconds: 10
   thread-pool:
-    order-outbox:
-      size: 2
     order-timeout:
       size: 1
     order-create-consumer:

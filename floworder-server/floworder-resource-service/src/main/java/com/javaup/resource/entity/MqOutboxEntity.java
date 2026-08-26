@@ -74,6 +74,16 @@ public class MqOutboxEntity {
     private LocalDateTime nextRetryTime;
 
     /**
+     * 当前发布租约的实例标识，仅用于定位和观测。
+     */
+    private String claimOwner;
+
+    /**
+     * 当前发布租约的 fencing token。
+     */
+    private String claimToken;
+
+    /**
      * 当前发送任务的抢占租约截止时间，防止多个服务实例同时投递同一条消息。
      */
     private LocalDateTime claimUntil;

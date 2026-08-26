@@ -8,12 +8,15 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.javaup.resource.entity.MqOutboxEntity;
 import com.javaup.resource.mapper.MqOutboxMapper;
 import jakarta.annotation.Resource;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static com.javaup.constant.OrderMqConstant.RESOURCE_SERVICE;
 
@@ -26,10 +29,20 @@ public class MqOutboxServiceImpl implements MqOutboxService {
 
     private static final int STATUS_SENT = 20;
     private static final int STATUS_DEAD = 40;
-    private static final int MAX_RETRY_COUNT = 5;
-
     @Resource
     private MqOutboxMapper mqOutboxMapper;
+
+    @Value("${floworder.mq.outbox.max-retry:5}")
+    private int maxRetryCount;
+
+    @Value("${floworder.mq.outbox.retry-base-ms:5000}")
+    private long retryBaseMillis;
+
+    @Value("${floworder.mq.outbox.retry-max-ms:300000}")
+    private long retryMaxMillis;
+
+    @Value("${floworder.mq.outbox.retry-jitter-ms:1000}")
+    private long retryJitterMillis;
 
     /**
      * 查询可发送的消息
@@ -52,80 +65,108 @@ public class MqOutboxServiceImpl implements MqOutboxService {
      * 抢占消息
      */
     @Override
-    public boolean claim(Long id) {
-        LocalDateTime now = LocalDateTime.now();
-        int rows = mqOutboxMapper.update(
-                null,
-                Wrappers.<MqOutboxEntity>lambdaUpdate()
-                        .eq(MqOutboxEntity::getId, id)
-                        .in(MqOutboxEntity::getStatus, STATUS_NEW, STATUS_RETRY)// 抢占待发送、待重试的消息
-                        .le(MqOutboxEntity::getNextRetryTime, now)
-                        .set(MqOutboxEntity::getStatus, STATUS_SENDING)// 状态改为发送中
-                        .set(MqOutboxEntity::getClaimUntil, now.plusSeconds(60))// 租约时间为60秒
+    public String claim(Long id, String claimOwner, long leaseSeconds) {
+        String claimToken = UUID.randomUUID().toString();
+        int rows = mqOutboxMapper.claim(
+                id,
+                RESOURCE_SERVICE,
+                claimOwner,
+                claimToken,
+                Math.max(1, leaseSeconds)
         );
-        return rows == 1;
+        return rows == 1 ? claimToken : null;
     }
 
     /**
      * 消息发送到rabbitmq成功
      */
     @Override
-    public void markSent(Long id) {
+    public boolean markSent(Long id, String claimToken) {
         int rows = mqOutboxMapper.update(
                 null,
                 Wrappers.<MqOutboxEntity>lambdaUpdate()
                         .eq(MqOutboxEntity::getId, id)
+                        .eq(MqOutboxEntity::getProducerService, RESOURCE_SERVICE)
                         .eq(MqOutboxEntity::getStatus, STATUS_SENDING)// 发送中
+                        .eq(MqOutboxEntity::getClaimToken, claimToken)
                         .set(MqOutboxEntity::getStatus, STATUS_SENT)// 状态改为发送成功
                         .set(MqOutboxEntity::getSentAt, LocalDateTime.now())
+                        .set(MqOutboxEntity::getClaimOwner, null)
+                        .set(MqOutboxEntity::getClaimToken, null)
                         .set(MqOutboxEntity::getClaimUntil, null)
                         .set(MqOutboxEntity::getLastError, null)
         );
-        if (rows != 1) {
-            throw new BizException("更新Outbox发送成功状态失败");
-        }
+        return rows == 1;
     }
 
     /**
      * 标记消息发送失败
      */
     @Override
-    public void markFailed(Long id, Integer currentRetryCount, String error) {
+    public boolean markFailed(Long id, String claimToken, Integer currentRetryCount, String error) {
         int nextRetryCount = Objects.requireNonNullElse(currentRetryCount, 0) + 1;
-        boolean dead = nextRetryCount >= MAX_RETRY_COUNT;
+        boolean dead = nextRetryCount >= Math.max(1, maxRetryCount);
         int rows = mqOutboxMapper.update(
                 null,
                 Wrappers.<MqOutboxEntity>lambdaUpdate()
                         .eq(MqOutboxEntity::getId, id)
+                        .eq(MqOutboxEntity::getProducerService, RESOURCE_SERVICE)
                         .eq(MqOutboxEntity::getStatus, STATUS_SENDING)// 发送中
+                        .eq(MqOutboxEntity::getClaimToken, claimToken)
                         .set(MqOutboxEntity::getStatus, dead ? STATUS_DEAD : STATUS_RETRY)// 状态改为发送失败或待重试
                         .set(MqOutboxEntity::getRetryCount, nextRetryCount)
                         .set(MqOutboxEntity::getNextRetryTime, dead ? null : calculateNextRetryTime(nextRetryCount))
+                        .set(MqOutboxEntity::getClaimOwner, null)
+                        .set(MqOutboxEntity::getClaimToken, null)
                         .set(MqOutboxEntity::getClaimUntil, null)
                         .set(MqOutboxEntity::getLastError, limitError(error))
         );
-        if (rows != 1) {
-            throw new BizException("更新Outbox发送失败状态失败");
-        }
+        return rows == 1;
+    }
+
+    @Override
+    public boolean releaseClaim(Long id, String claimToken, long delayMillis, String error) {
+        LocalDateTime nextRetryTime = LocalDateTime.now()
+                .plusNanos(Math.max(1, delayMillis) * 1_000_000L);
+        int rows = mqOutboxMapper.update(
+                null,
+                Wrappers.<MqOutboxEntity>lambdaUpdate()
+                        .eq(MqOutboxEntity::getId, id)
+                        .eq(MqOutboxEntity::getProducerService, RESOURCE_SERVICE)
+                        .eq(MqOutboxEntity::getStatus, STATUS_SENDING)
+                        .eq(MqOutboxEntity::getClaimToken, claimToken)
+                        .set(MqOutboxEntity::getStatus, STATUS_RETRY)
+                        .set(MqOutboxEntity::getNextRetryTime, nextRetryTime)
+                        .set(MqOutboxEntity::getClaimOwner, null)
+                        .set(MqOutboxEntity::getClaimToken, null)
+                        .set(MqOutboxEntity::getClaimUntil, null)
+                        .set(MqOutboxEntity::getLastError, limitError(error))
+        );
+        return rows == 1;
     }
 
     /**
      * MQ Outbox 消息发送租约回收，也可以理解为：把卡死在发送中的消息重新放回可重试队列，避免消息永远停留在 SENDING 状态
      */
     @Override
-    public void reclaimExpiredClaims() {
+    public int reclaimExpiredClaims(int limit) {
         LocalDateTime now = LocalDateTime.now();
-        mqOutboxMapper.update(
-                null,
-                Wrappers.<MqOutboxEntity>lambdaUpdate()
+        List<MqOutboxEntity> expired = mqOutboxMapper.selectList(
+                Wrappers.<MqOutboxEntity>lambdaQuery()
                         .eq(MqOutboxEntity::getProducerService, RESOURCE_SERVICE)
-                        .eq(MqOutboxEntity::getStatus, STATUS_SENDING)// 发送中
-                        .le(MqOutboxEntity::getClaimUntil, now)// 说明它的发送租约已经过期
-                        .set(MqOutboxEntity::getStatus, STATUS_RETRY)// 待重试
-                        .set(MqOutboxEntity::getNextRetryTime, now)
-                        .set(MqOutboxEntity::getClaimUntil, null)// claimUntil 清空，表示不再被某个发送任务占有
-                        .set(MqOutboxEntity::getLastError, "发送租约过期，等待重新发送")
+                        .eq(MqOutboxEntity::getStatus, STATUS_SENDING)
+                        .isNotNull(MqOutboxEntity::getClaimToken)
+                        .le(MqOutboxEntity::getClaimUntil, now)
+                        .orderByAsc(MqOutboxEntity::getClaimUntil)
+                        .last("limit " + Math.min(Math.max(limit, 1), 500))
         );
+        int reclaimed = 0;
+        for (MqOutboxEntity record : expired) {
+            int rows = mqOutboxMapper.reclaimExpired(
+                    record.getId(), RESOURCE_SERVICE, record.getClaimToken());
+            reclaimed += rows;
+        }
+        return reclaimed;
     }
 
     @Override
@@ -198,6 +239,8 @@ public class MqOutboxServiceImpl implements MqOutboxService {
                         .set(MqOutboxEntity::getStatus, STATUS_RETRY)// 待重试
                         .set(MqOutboxEntity::getRetryCount, 0)
                         .set(MqOutboxEntity::getNextRetryTime, now)
+                        .set(MqOutboxEntity::getClaimOwner, null)
+                        .set(MqOutboxEntity::getClaimToken, null)
                         .set(MqOutboxEntity::getClaimUntil, null)
                         .set(MqOutboxEntity::getSentAt, null)
                         .set(MqOutboxEntity::getLastError, reason)
@@ -226,13 +269,13 @@ public class MqOutboxServiceImpl implements MqOutboxService {
      * 计算下次的发送时间
      */
     private LocalDateTime calculateNextRetryTime(int retryCount) {
-        long delaySeconds = switch (retryCount) {
-            case 1 -> 5;
-            case 2 -> 30;
-            case 3 -> 120;
-            default -> 300;
-        };
-        return LocalDateTime.now().plusSeconds(delaySeconds);
+        long max = Math.max(1, retryMaxMillis);
+        long base = Math.max(1, retryBaseMillis);
+        long multiplier = 1L << Math.min(Math.max(retryCount - 1, 0), 20);
+        long exponential = base > max / multiplier ? max : base * multiplier;
+        long jitterBound = Math.max(0, retryJitterMillis);
+        long jitter = jitterBound == 0 ? 0 : ThreadLocalRandom.current().nextLong(jitterBound + 1);
+        return LocalDateTime.now().plusNanos((Math.min(max, exponential) + jitter) * 1_000_000L);
     }
 
     private String limitError(String error) {

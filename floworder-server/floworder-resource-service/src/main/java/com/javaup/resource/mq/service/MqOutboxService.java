@@ -15,22 +15,25 @@ public interface MqOutboxService {
     /**
      * 抢占消息
      */
-    boolean claim(Long id);
+    String claim(Long id, String claimOwner, long leaseSeconds);
 
     /**
      * 消息发送到rabbitmq成功
      */
-    void markSent(Long id);
+    boolean markSent(Long id, String claimToken);
 
     /**
      * 标记消息发送失败
      */
-    void markFailed(Long id, Integer currentRetryCount, String error);
+    boolean markFailed(Long id, String claimToken, Integer currentRetryCount, String error);
+
+    /** 本机发布执行器拒绝后的短暂背压释放，不增加发送失败次数。 */
+    boolean releaseClaim(Long id, String claimToken, long delayMillis, String error);
 
     /**
      * MQ Outbox 消息发送租约回收
      */
-    void reclaimExpiredClaims();
+    int reclaimExpiredClaims(int limit);
 
     List<MqOutboxAdminDto> findDead(int limit);
 

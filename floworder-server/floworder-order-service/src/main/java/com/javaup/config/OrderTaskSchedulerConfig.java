@@ -11,9 +11,9 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 public class OrderTaskSchedulerConfig {
 
     @Bean(name = "orderOutboxTaskScheduler", destroyMethod = "shutdown")
-    public ThreadPoolTaskScheduler orderOutboxTaskScheduler(
-            @Value("${floworder.thread-pool.order-outbox.size:2}") int poolSize) {
-        return buildScheduler("order-outbox-", poolSize);
+    public ThreadPoolTaskScheduler orderOutboxTaskScheduler() {
+        // 每实例一个scanner；多实例并发由数据库claim CAS仲裁。
+        return buildScheduler("order-outbox-", 1);
     }
 
     @Bean(name = "orderTimeoutTaskScheduler", destroyMethod = "shutdown")
