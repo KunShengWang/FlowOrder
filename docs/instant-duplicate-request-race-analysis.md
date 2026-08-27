@@ -67,4 +67,13 @@ manual review=357
 
 ### AFTER_FIX
 
-自动化回归已经证明确定性竞态不再释放credential，2/5/64线程下只允许一个处理者。真实5000:100、1000×5五轮与有序digest conflict三轮结果在新代码commit后执行，并记录到 `benchmark/reports/stock-correctness-after-fix-report.md`；完成前不冻结简历数据。
+修复提交为 `39f23ba4bd143fc786f6f7d3ebce7e4f45498089`。自动化回归证明确定性竞态不再释放credential，2/5/64线程下只允许一个处理者；`InstantReservationServiceImplTest` 共13项全部通过。
+
+真实专项结果：
+
+- `5000 unique : 100 stock` 连续5轮PASS；每轮Redis首次准入/SOLD_OUT=`100/4900`，`M=100`，acceptance/deduction/order=`100/100/100`，无超卖、重复或库存差异。
+- `1000 requestId × 5` 连续5轮PASS；每轮Redis首次准入/duplicate=`1000/4000`，`M=1000`，acceptance/deduction/order=`1000/1000/1000`，manual review=0，business loss=0。
+- 有序digest conflict连续3轮PASS；payload A先完整收敛，payload B再以不同quantity提交并明确返回`REJECTED/IDEMPOTENT_CONFLICT`，原请求、deduction、order和credential均保持一份。
+- business-loss negative control（expected=1000、actual=643）和oversell negative control（stock=100、facts=101）均被新checker判为FAIL。
+
+详细证据见 `benchmark/reports/stock-correctness-after-fix-report.md`。该结论只冻结本阶段Instant热点库存与并发幂等正确性，不扩展为MQ故障、状态竞争或F1～F7证据。
