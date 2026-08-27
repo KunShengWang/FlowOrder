@@ -27,11 +27,13 @@ import com.rabbitmq.client.Channel;
 import jakarta.annotation.Resource;
 import org.redisson.api.RedissonClient;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.time.LocalDateTime;
@@ -52,6 +54,8 @@ import static com.javaup.resource.enums.StockDeductStatusEnum.ORDER_CREATED;
 import static com.javaup.resource.enums.StockDeductStatusEnum.PRE_DEDUCTED;
 import static com.javaup.resource.enums.StockDeductStatusEnum.RELEASED;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -126,6 +130,15 @@ class DeadLetterRecoveryBaselineIntegrationTest {
     private final List<Long> stockItemIds = new ArrayList<>();
     private final List<Long> quotaIds = new ArrayList<>();
     private final List<String> deductNos = new ArrayList<>();
+
+    @BeforeEach
+    void stubInstantCredentialUpdate() {
+        when(stringRedisTemplate.execute(
+                any(RedisScript.class),
+                anyList(),
+                any(Object[].class)
+        )).thenReturn(1L);
+    }
 
     @AfterEach
     void cleanData() {
@@ -424,7 +437,10 @@ class DeadLetterRecoveryBaselineIntegrationTest {
         request.setQuantity(record.getQuantity());
         request.setOrderNo(record.getOrderNo());
         request.setStatus(20);
-        request.setOrderStatus(RESERVED.getCode());
+        // PRE_DEDUCTED 表示订单创建结果仍未决；只有 ORDER_CREATED 场景才已进入 RESERVED。
+        request.setOrderStatus(deductStatus == PRE_DEDUCTED.getCode()
+                ? null
+                : RESERVED.getCode());
         request.setOrderEventVersion(0);
         request.setRetryCount(0);
         request.setVersion(0);
