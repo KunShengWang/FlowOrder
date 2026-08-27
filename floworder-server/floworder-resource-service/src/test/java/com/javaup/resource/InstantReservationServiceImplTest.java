@@ -17,6 +17,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -145,7 +154,7 @@ class InstantReservationServiceImplTest {
     }
 
     @Test
-    void newRedisAdmissionForExistingMysqlRequestMustBeReleased() {
+    void newAdmissionThatFindsSameMysqlRequestMustKeepSharedCredential() {
         ResourceOrderCreateDto dto = dto();
         ReservationRequestEntity accepted = request(ReservationRequestStatusEnum.ACCEPTED, "order-1");
         when(admissionService.admit(dto)).thenReturn(attempt(InstantAdmissionResultEnum.ADMITTED_NEW));
@@ -155,9 +164,78 @@ class InstantReservationServiceImplTest {
         InstantReservationResultDto result = service.submit(dto, "trace-1");
 
         assertEquals("ACCEPTED", result.getResultStatus());
-        verify(admissionService).release(dto, "digest", false);
+        verify(admissionService, never()).release(any(), anyString(), anyBoolean());
+        verify(admissionService).markPersistedBestEffort("request-1");
         verify(requestService, never()).claim(anyLong(), anyString(), any(), any());
         verifyNoInteractions(processor);
+    }
+
+    @Test
+    void concurrentNewAdmissionLosingMysqlInsertMustNotReleaseCredential() throws Exception {
+        ResourceOrderCreateDto dto = dto();
+        ReservationRequestEntity pending = request(ReservationRequestStatusEnum.PENDING, null);
+        ReservationRequestEntity accepted = request(ReservationRequestStatusEnum.ACCEPTED, "order-1");
+        CountDownLatch newAdmissionReached = new CountDownLatch(1);
+        CountDownLatch duplicateCompleted = new CountDownLatch(1);
+
+        when(admissionService.admit(dto)).thenAnswer(invocation -> {
+            if (Thread.currentThread().getName().equals("new-admission")) {
+                newAdmissionReached.countDown();
+                assertTrue(duplicateCompleted.await(5, TimeUnit.SECONDS));
+                return attempt(InstantAdmissionResultEnum.ADMITTED_NEW);
+            }
+            assertTrue(newAdmissionReached.await(5, TimeUnit.SECONDS));
+            return attempt(InstantAdmissionResultEnum.ADMITTED_DUPLICATE);
+        });
+        when(requestService.submitInstant(dto, "trace-1")).thenAnswer(invocation -> {
+            if (Thread.currentThread().getName().equals("duplicate-admission")) {
+                return new ReservationRequestService.InstantRequestSubmission(pending, true);
+            }
+            return new ReservationRequestService.InstantRequestSubmission(accepted, false);
+        });
+        when(requestService.claim(eq(1L), startsWith("instant-http-"), any(), any()))
+                .thenAnswer(invocation -> Thread.currentThread().getName().equals("duplicate-admission"));
+        when(processor.process(eq(pending), startsWith("instant-http-"))).thenAnswer(invocation -> {
+            duplicateCompleted.countDown();
+            return InstantReservationProcessor.accepted("request-1", "order-1");
+        });
+
+        ExecutorService newAdmissionExecutor = Executors.newSingleThreadExecutor(runnable ->
+                new Thread(runnable, "new-admission"));
+        ExecutorService duplicateAdmissionExecutor = Executors.newSingleThreadExecutor(runnable ->
+                new Thread(runnable, "duplicate-admission"));
+        try {
+            Future<InstantReservationResultDto> first = newAdmissionExecutor.submit(
+                    () -> service.submit(dto, "trace-1"));
+            assertTrue(newAdmissionReached.await(5, TimeUnit.SECONDS));
+            Future<InstantReservationResultDto> second = duplicateAdmissionExecutor.submit(
+                    () -> service.submit(dto, "trace-1"));
+
+            assertEquals("ACCEPTED", first.get(5, TimeUnit.SECONDS).getResultStatus());
+            assertEquals("ACCEPTED", second.get(5, TimeUnit.SECONDS).getResultStatus());
+        } finally {
+            newAdmissionExecutor.shutdownNow();
+            duplicateAdmissionExecutor.shutdownNow();
+        }
+
+        verify(admissionService, never()).release(any(), anyString(), anyBoolean());
+        verify(requestService, times(2)).submitInstant(dto, "trace-1");
+        verify(processor, times(1)).process(eq(pending), startsWith("instant-http-"));
+    }
+
+    @Test
+    void sameRequestTwoThreadsMustCreateAndProcessOnlyOnce() throws Exception {
+        assertConcurrentSameRequest(2);
+    }
+
+    @Test
+    void sameRequestFiveThreadsMustCreateAndProcessOnlyOnce() throws Exception {
+        assertConcurrentSameRequest(5);
+    }
+
+    @Test
+    void sameRequestHighConcurrencyMustCreateAndProcessOnlyOnce() throws Exception {
+        assertConcurrentSameRequest(64);
     }
 
     @Test
@@ -173,6 +251,61 @@ class InstantReservationServiceImplTest {
         assertEquals("IDEMPOTENT_CONFLICT", result.getReasonCode());
         verify(admissionService).release(dto, "digest", false);
         verifyNoInteractions(processor);
+    }
+
+    private void assertConcurrentSameRequest(int threads) throws Exception {
+        reset(admissionService, requestService, processor);
+        ResourceOrderCreateDto dto = dto();
+        ReservationRequestEntity pending = request(ReservationRequestStatusEnum.PENDING, null);
+        ReservationRequestEntity accepted = request(ReservationRequestStatusEnum.ACCEPTED, "order-1");
+        AtomicInteger admissionSequence = new AtomicInteger();
+        AtomicBoolean inserted = new AtomicBoolean();
+        AtomicBoolean claimed = new AtomicBoolean();
+        AtomicInteger processorCalls = new AtomicInteger();
+        CountDownLatch ready = new CountDownLatch(threads);
+        CountDownLatch start = new CountDownLatch(1);
+
+        when(admissionService.admit(dto)).thenAnswer(invocation -> attempt(
+                admissionSequence.getAndIncrement() == 0
+                        ? InstantAdmissionResultEnum.ADMITTED_NEW
+                        : InstantAdmissionResultEnum.ADMITTED_DUPLICATE
+        ));
+        when(requestService.submitInstant(dto, "trace-1")).thenAnswer(invocation ->
+                new ReservationRequestService.InstantRequestSubmission(
+                        pending,
+                        inserted.compareAndSet(false, true)
+                )
+        );
+        when(requestService.claim(eq(1L), startsWith("instant-http-"), any(), any()))
+                .thenAnswer(invocation -> claimed.compareAndSet(false, true));
+        when(requestService.findByRequestId("request-1")).thenReturn(accepted);
+        when(processor.process(eq(pending), startsWith("instant-http-"))).thenAnswer(invocation -> {
+            processorCalls.incrementAndGet();
+            return InstantReservationProcessor.accepted("request-1", "order-1");
+        });
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<InstantReservationResultDto>> futures = java.util.stream.IntStream.range(0, threads)
+                    .mapToObj(index -> executor.submit(() -> {
+                        ready.countDown();
+                        assertTrue(start.await(5, TimeUnit.SECONDS));
+                        return service.submit(dto, "trace-1");
+                    }))
+                    .toList();
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            for (Future<InstantReservationResultDto> future : futures) {
+                assertNotNull(future.get(10, TimeUnit.SECONDS));
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertTrue(inserted.get(), "reservation_request事实应只创建一次");
+        assertEquals(1, processorCalls.get(), "claim CAS后只允许一个processor执行");
+        verify(admissionService, never()).release(any(), anyString(), anyBoolean());
+        verify(processor, times(1)).process(eq(pending), startsWith("instant-http-"));
     }
 
     private InstantAdmissionService.AdmissionAttempt attempt(InstantAdmissionResultEnum result) {

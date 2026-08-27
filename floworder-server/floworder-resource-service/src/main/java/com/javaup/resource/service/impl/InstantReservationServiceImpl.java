@@ -94,21 +94,12 @@ public class InstantReservationServiceImpl implements InstantReservationService 
         }
         ReservationRequestEntity request = submission.request();
 
-        // 没有持久化预约请求 + Redis 是新扣的 → 释放重复准入
-        if (Boolean.FALSE.equals(submission.created())
-                && admission == InstantAdmissionResultEnum.ADMITTED_NEW) {
-            try {
-                // 释放 redis 库存
-                admissionService.release(dto, attempt.digest(), false);
-            } catch (RuntimeException exception) {
-                return InstantReservationProcessor.processing(
-                        dto.getRequestId(),
-                        "DUPLICATE_ADMISSION_RECOVERY",
-                        "重复准入库存回收中，请查询原请求结果"
-                );
-            }
-            return mapExisting(request);
-        }
+        /*
+         * created=false 只表示当前线程没有插入预约请求，不代表业务事实不存在。
+         * 并发重复请求可能让 ADMITTED_DUPLICATE 调用先插入数据库，随后
+         * ADMITTED_NEW 调用读到同一合法请求。此时 credential 已属于该业务请求，
+         * 不能由未插入数据库的线程释放；后续仍由 request claim CAS 仲裁处理权。
+         */
         // 请求已确认落库 → best-effort 把 requestId 从 INSTANT_UNPERSISTED ZSet 移除（标记"已落库"）。失败只 warn 不阻塞——因为后续还有租约扫描兜底。
         admissionService.markPersistedBestEffort(dto.getRequestId());
 
